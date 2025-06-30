@@ -4,7 +4,7 @@ import uuid
 import random
 from datetime import datetime, timedelta
 
-BASE_URL = "http://localhost:5000/api/wifi_board_tests"  # API base address for wifi_board_tests
+BASE_URL = "http://121.196.236.235:5000/api/wifi_board_tests"  # API base address for wifi_board_tests
 
 def create_new_wifi_test(wifi_board_sn, knob_result="PENDING", knob_remark="", network_result="PENDING", network_remark=""):
     """Sends a POST request to create a new wifi board test record."""

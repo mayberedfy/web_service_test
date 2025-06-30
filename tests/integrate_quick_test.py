@@ -4,7 +4,7 @@ import uuid
 import random
 from datetime import datetime, timedelta
 
-BASE_URL = "http://localhost:5000/api/integrate_tests"  # API base address for integrate_tests
+BASE_URL = "http://121.196.236.235:5000/api/integrate_tests"  # API base address for integrate_tests
 
 def create_new_integrate_test(integrate_sn, motor_result="PENDING", motor_remark="", power_result="PENDING", power_remark=""):
     """Sends a POST request to create a new integrate test record."""

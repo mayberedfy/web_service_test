@@ -201,7 +201,9 @@ def populate_test_fields(test, json_data, is_update=False):
     # 旋钮测试相关
     test.knob_test_result = json_data.get('knob_test_result', test.knob_test_result if is_update else None)
     test.speed_knob_result = json_data.get('speed_knob_result', test.speed_knob_result if is_update else None)
+    test.speed_knob_remark = json_data.get('speed_knob_remark', test.speed_knob_remark if is_update else None)
     test.time_knob_result = json_data.get('time_knob_result', test.time_knob_result if is_update else None)
+    test.time_knob_remark = json_data.get('time_knob_remark', test.time_knob_remark if is_update else None)
     test.knob_start_time = parse_datetime(json_data.get('knob_start_time')) if 'knob_start_time' in json_data else (test.knob_start_time if is_update else None)
     test.knob_end_time = parse_datetime(json_data.get('knob_end_time')) if 'knob_end_time' in json_data else (test.knob_end_time if is_update else None)
     
@@ -216,6 +218,7 @@ def populate_test_fields(test, json_data, is_update=False):
     # 网络测试相关
     test.network_test_result = json_data.get('network_test_result', test.network_test_result if is_update else None)
     test.wifi_software_version = json_data.get('wifi_software_version', test.wifi_software_version if is_update else None)
+    test.mac_address = json_data.get('mac_address', test.mac_address if is_update else None)
     test.start_command_result = json_data.get('start_command_result', test.start_command_result if is_update else None)
     test.speed_command_result = json_data.get('speed_command_result', test.speed_command_result if is_update else None)
     test.stop_command_result = json_data.get('stop_command_result', test.stop_command_result if is_update else None)

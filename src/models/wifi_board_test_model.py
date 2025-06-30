@@ -13,7 +13,9 @@ class WifiBoardTest(db.Model):
     
     knob_test_result = db.Column(db.String(64), nullable=True)
     speed_knob_result = db.Column(db.String(64), nullable=True)
+    speed_knob_remark = db.Column(db.String(64), nullable=True)
     time_knob_result = db.Column(db.String(64), nullable=True)
+    time_knob_remark = db.Column(db.String(64), nullable=True)
     knob_start_time = db.Column(db.DateTime, nullable=True)
     knob_end_time = db.Column(db.DateTime, nullable=True)
 
@@ -26,6 +28,7 @@ class WifiBoardTest(db.Model):
 
     network_test_result = db.Column(db.String(64), nullable=True)
     wifi_software_version = db.Column(db.String(32), nullable=True)
+    mac_address = db.Column(db.String(64), nullable=True)
     start_command_result = db.Column(db.String(64), nullable=True)
     speed_command_result = db.Column(db.String(64), nullable=True)
     stop_command_result = db.Column(db.String(64), nullable=True)
@@ -47,7 +50,9 @@ class WifiBoardTest(db.Model):
             # 旋钮测试相关
             'knob_test_result': self.knob_test_result,
             'speed_knob_result': self.speed_knob_result,
+            'speed_knob_remark': self.speed_knob_remark,
             'time_knob_result': self.time_knob_result,
+            'time_knob_remark': self.time_knob_remark,
             'knob_start_time': self.knob_start_time.isoformat() if self.knob_start_time else None,
             'knob_end_time': self.knob_end_time.isoformat() if self.knob_end_time else None,
             
@@ -62,6 +67,7 @@ class WifiBoardTest(db.Model):
             # 网络测试相关
             'network_test_result': self.network_test_result,
             'wifi_software_version': self.wifi_software_version,
+            'mac_address': self.mac_address,
             'start_command_result': self.start_command_result,
             'speed_command_result': self.speed_command_result,
             'stop_command_result': self.stop_command_result,

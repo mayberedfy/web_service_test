@@ -1,7 +1,9 @@
 from .wifi_board_test_model import WifiBoardTest
-from .test_data_model import TestData
+from .driver_board_test_model import DriverBoardTest
+from .integrate_test_model import IntegrateTest
 
 __all__ = [
     'WifiBoardTest',
-    'TestData',
+    'DriverBoardTest',
+    'IntegrateTest',
 ]

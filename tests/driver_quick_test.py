@@ -4,7 +4,7 @@ import uuid
 import random
 from datetime import datetime, timedelta
 
-BASE_URL = "http://localhost:5000/api/driver_board_tests"  # API base address for driver_board_tests
+BASE_URL = "http://121.196.236.235:5000/api/driver_board_tests"  # API base address for driver_board_tests
 
 def create_new_driver_test(driver_board_sn, motor_result="PENDING", motor_remark="", power_result="PENDING", power_remark=""):
     """Sends a POST request to create a new driver board test record."""
