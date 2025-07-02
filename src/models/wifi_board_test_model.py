@@ -35,7 +35,7 @@ class WifiBoardTest(db.Model):
     network_start_time = db.Column(db.DateTime, nullable=True)
     network_end_time = db.Column(db.DateTime, nullable=True)
 
-    test_ip_address = db.Column(db.String(32), nullable=True)
+    test_ip_address = db.Column(db.String(128), nullable=True)
     start_time = db.Column(db.DateTime, nullable=True)
     end_time = db.Column(db.DateTime, nullable=True)
     update_time = db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
