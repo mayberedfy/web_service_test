@@ -179,13 +179,6 @@ def populate_test_fields(test, json_data, is_update=False):
         test.driver_board_sn = json_data.get('driver_board_sn', test.driver_board_sn if is_update else None)
     test.general_test_result = json_data.get('general_test_result', test.general_test_result if is_update else 'PENDING')
     
-    # 测试结果字段（是否通过测试）
-    test.motor_status_result = json_data.get('motor_status_result', test.motor_status_result if is_update else None)
-    test.motor_speed_result = json_data.get('motor_speed_result', test.motor_speed_result if is_update else None)
-    test.ipm_temperature_result = json_data.get('ipm_temperature_result', test.ipm_temperature_result if is_update else None)
-    test.dc_voltage_result = json_data.get('dc_voltage_result', test.dc_voltage_result if is_update else None)
-    test.output_power_result = json_data.get('output_power_result', test.output_power_result if is_update else None)
-    test.driver_software_version_result = json_data.get('driver_software_version_result', test.driver_software_version_result if is_update else None)
     
     # 测试数值字段（实际测试数据）
     test.motor_status = json_data.get('motor_status', test.motor_status if is_update else None)
@@ -195,6 +188,15 @@ def populate_test_fields(test, json_data, is_update=False):
     test.output_power = json_data.get('output_power', test.output_power if is_update else None)
     test.driver_software_version = json_data.get('driver_software_version', test.driver_software_version if is_update else None)
     
+    # 测试结果字段（是否通过测试）
+    test.motor_status_result = json_data.get('motor_status_result', test.motor_status_result if is_update else None)
+    test.motor_speed_result = json_data.get('motor_speed_result', test.motor_speed_result if is_update else None)
+    test.ipm_temperature_result = json_data.get('ipm_temperature_result', test.ipm_temperature_result if is_update else None)
+    test.dc_voltage_result = json_data.get('dc_voltage_result', test.dc_voltage_result if is_update else None)
+    test.output_power_result = json_data.get('output_power_result', test.output_power_result if is_update else None)
+    test.driver_software_version_result = json_data.get('driver_software_version_result', test.driver_software_version_result if is_update else None)
+    
+
     # 测试运行时间相关
     if 'test_runtime' in json_data:
         # 确保 test_runtime 是整数类型
@@ -209,7 +211,7 @@ def populate_test_fields(test, json_data, is_update=False):
     test.test_ip_address = json_data.get('test_ip_address', test.test_ip_address if is_update else None)
     test.start_time = parse_datetime(json_data.get('start_time')) if 'start_time' in json_data else (test.start_time if is_update else None)
     test.end_time = parse_datetime(json_data.get('end_time')) if 'end_time' in json_data else (test.end_time if is_update else None)
-    test.general_test_remark = json_data.get('general_test_remark', test.general_test_remark if is_update else None)
+    test.general_test_remark = json_data.get('test_remark', test.general_test_remark if is_update else None)
 
 def validate_required_fields(json_data):
     """验证必填字段"""

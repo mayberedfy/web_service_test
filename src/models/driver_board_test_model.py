@@ -28,6 +28,7 @@ class DriverBoardTest(db.Model):
 
 
     test_runtime = db.Column(db.Integer, nullable=True, comment='测试运行时长，单位：秒')
+    set_speed = db.Column(db.Integer, nullable=True, comment='设置速度，单位：RPM')
     test_ip_address = db.Column(db.String(32), nullable=True)
     start_time = db.Column(db.DateTime, nullable=True)
     end_time = db.Column(db.DateTime, nullable=True)
@@ -57,8 +58,9 @@ class DriverBoardTest(db.Model):
             'driver_software_version': self.driver_software_version,
             
             # 测试时间和运行信息
-            'test_runtime': self.test_runtime,  # 整数类型，单位：秒
+            'test_runtime': self.test_runtime,  
             'test_ip_address': self.test_ip_address,
+            'set_speed': self.set_speed,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
             'update_time': self.update_time.isoformat() if self.update_time else None,
