@@ -4,6 +4,9 @@ WORKDIR /app
 
 # 只复制依赖声明文件，加快缓存
 COPY pyproject.toml .
+COPY README.md .
+COPY src ./src
+COPY start.sh .
 
 # 安装构建系统
 RUN pip install --upgrade pip && pip install hatchling
@@ -11,8 +14,6 @@ RUN pip install --upgrade pip && pip install hatchling
 # 安装项目依赖（hatchling会读取pyproject.toml）
 RUN pip install .
 
-# 复制项目代码（如src目录和启动脚本等）
-COPY . .
 
 EXPOSE 8000
 
