@@ -1,43 +1,35 @@
-name: Docker Deploy to Cloud Server
+name: Deploy
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/web_service_test:latest
-
-      - name: Deploy on remote server via SSH
+      - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/web_service_test:latest
+            # 登录阿里云容器镜像仓库
+            docker login --username=${{ secrets.ALIYUN_USER }} --password=${{ secrets.ALIYUN_PASS }} crpi-kdr9fgca88mf2q5d.cn-hangzhou.personal.cr.aliyuncs.com
+
+            # 拉取最新镜像
+            docker pull crpi-kdr9fgca88mf2q5d.cn-hangzhou.personal.cr.aliyuncs.com/kktt_mic/web_service_test:latest
+
+            # 停止并删除旧容器（如果有）
             docker stop web_service_test || true
             docker rm web_service_test || true
+
+            # 启动新容器（根据你实际需要调整端口、env等参数）
             docker run -d --name web_service_test -p 8000:8000 --restart=always \
-              --env-file /home/${{ secrets.SERVER_USER }}/web_service_test.env \
-              ${{ secrets.DOCKERHUB_USERNAME }}/web_service_test:latest
+              --env-file /root/web_service_test/.env \
+              crpi-kdr9fgca88mf2q5d.cn-hangzhou.personal.cr.aliyuncs.com/kktt_mic/web_service_test:latest
