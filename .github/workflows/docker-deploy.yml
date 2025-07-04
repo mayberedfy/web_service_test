@@ -15,9 +15,9 @@ jobs:
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.YOUR_SERVER_IP }}
-          username: ${{ secrets.YOUR_SERVER_USER }}
-          key: ${{ secrets.YOUR_SERVER_SSH_KEY }}
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             # 登录阿里云容器镜像仓库
             docker login --username=${{ secrets.ALIYUN_USER }} --password=${{ secrets.ALIYUN_PASS }} crpi-kdr9fgca88mf2q5d.cn-hangzhou.personal.cr.aliyuncs.com
