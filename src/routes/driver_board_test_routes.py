@@ -25,13 +25,19 @@ def create_driver_board_test():
         
         logger.info(f"Creating driver board test for SN: {json_data['driver_board_sn']}")
         print(f"Received data: {json_data}", flush=True)
+        with open('/tmp/pydebug.log', 'a') as f:
+            f.write(f"Received data: {json_data}\n")
         new_test = DriverBoardTest()
         populate_test_fields(new_test, json_data)
         
         print(f"Before commit - set_speed: {new_test.set_speed}", flush=True)
+        with open('/tmp/pydebug.log', 'a') as f:
+            f.write(f"Before commit - set_speed: {new_test.set_speed}\n")
         db.session.add(new_test)
         db.session.commit()
         print(f"After commit - set_speed: {new_test.set_speed}", flush=True)
+        with open('/tmp/pydebug.log', 'a') as f:
+            f.write(f"After commit - set_speed: {new_test.set_speed}\n")
         logger.info(f"Driver board test created successfully with ID: {new_test.id}")
         return jsonify(new_test.to_dict()), 201
         
