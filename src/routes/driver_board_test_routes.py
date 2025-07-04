@@ -209,6 +209,7 @@ def populate_test_fields(test, json_data, is_update=False):
     
     # 通用信息
     test.test_ip_address = json_data.get('test_ip_address', test.test_ip_address if is_update else None)
+    test.set_speed = json_data.get('set_speed', test.set_speed if is_update else None)
     test.start_time = parse_datetime(json_data.get('start_time')) if 'start_time' in json_data else (test.start_time if is_update else None)
     test.end_time = parse_datetime(json_data.get('end_time')) if 'end_time' in json_data else (test.end_time if is_update else None)
     test.general_test_remark = json_data.get('test_remark', test.general_test_remark if is_update else None)
