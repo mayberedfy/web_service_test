@@ -24,14 +24,14 @@ def create_driver_board_test():
             return jsonify(error), status
         
         logger.info(f"Creating driver board test for SN: {json_data['driver_board_sn']}")
-        print(f"Received data: {json_data}")
-        print(f"Before commit - set_speed: {new_test.set_speed}")
+        print(f"Received data: {json_data}", flush=True)
+        print(f"Before commit - set_speed: {new_test.set_speed}", flush=True)
         new_test = DriverBoardTest()
         populate_test_fields(new_test, json_data)
         
         db.session.add(new_test)
         db.session.commit()
-        print(f"After commit - set_speed: {new_test.set_speed}")
+        print(f"After commit - set_speed: {new_test.set_speed}", flush=True)
         logger.info(f"Driver board test created successfully with ID: {new_test.id}")
         return jsonify(new_test.to_dict()), 201
         
@@ -215,11 +215,11 @@ def populate_test_fields(test, json_data, is_update=False):
         # 确保 set_speed 是整数类型
         try:
             test.set_speed = int(json_data['set_speed']) if json_data['set_speed'] is not None else None
-            print(f"set_speed set to: {test.set_speed}")
+            print(f"set_speed set to: {test.set_speed}", flush=True)
         except (ValueError, TypeError):
             raise ValueError("set_speed must be an integer (RPM)")
     elif not is_update:
-        print("set_speed not found in json_data, setting to None")
+        print("set_speed not found in json_data, setting to None", flush=True)
         test.set_speed = None
 
     # 通用信息
