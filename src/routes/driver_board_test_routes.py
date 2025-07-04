@@ -206,10 +206,20 @@ def populate_test_fields(test, json_data, is_update=False):
             raise ValueError("test_runtime must be an integer (seconds)")
     elif not is_update:
         test.test_runtime = None
-    
+
+
+    # 测试运行时间相关
+    if 'set_speed' in json_data:
+        # 确保 set_speed 是整数类型
+        try:
+            test.set_speed = int(json_data['set_speed']) if json_data['set_speed'] is not None else None
+        except (ValueError, TypeError):
+            raise ValueError("set_speed must be an integer (RPM)")
+    elif not is_update:
+        test.set_speed = None
+
     # 通用信息
     test.test_ip_address = json_data.get('test_ip_address', test.test_ip_address if is_update else None)
-    test.set_speed = json_data.get('set_speed', test.set_speed if is_update else None)
     test.start_time = parse_datetime(json_data.get('start_time')) if 'start_time' in json_data else (test.start_time if is_update else None)
     test.end_time = parse_datetime(json_data.get('end_time')) if 'end_time' in json_data else (test.end_time if is_update else None)
     test.general_test_remark = json_data.get('test_remark', test.general_test_remark if is_update else None)
