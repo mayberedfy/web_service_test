@@ -1,5 +1,5 @@
 import uuid
-import ulid # Import ulid
+import ulid
 from sqlalchemy import UUID # Changed back to generic UUID
 
 from src.extensions import db # Import the db instance

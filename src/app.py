@@ -1,6 +1,6 @@
 from flask import Flask
 
-from config.database import Config
+from src.config.database import Config
 from src.extensions import db
 from src.routes import wifi_board_tests_bp, driver_board_tests_bp, integrate_tests_bp
 app = Flask(__name__)
@@ -21,4 +21,4 @@ def home():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all() # Ensure all tables are created
-    app.run(debug=True, host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    app.run(debug=True, host='0.0.0.0', port=5000)

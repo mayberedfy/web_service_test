@@ -25,10 +25,10 @@ def create_driver_board_test():
         
         logger.info(f"Creating driver board test for SN: {json_data['driver_board_sn']}")
         print(f"Received data: {json_data}", flush=True)
-        print(f"Before commit - set_speed: {new_test.set_speed}", flush=True)
         new_test = DriverBoardTest()
         populate_test_fields(new_test, json_data)
         
+        print(f"Before commit - set_speed: {new_test.set_speed}", flush=True)
         db.session.add(new_test)
         db.session.commit()
         print(f"After commit - set_speed: {new_test.set_speed}", flush=True)
