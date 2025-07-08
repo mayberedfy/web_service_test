@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from src.extensions import db
@@ -9,8 +9,6 @@ wifi_board_tests_bp = Blueprint('wifi_board_tests_bp', __name__, url_prefix='/ap
 
 # 配置日志
 logger = logging.getLogger(__name__)
-
-
 
 @wifi_board_tests_bp.route('', methods=['POST'])
 def create_wifi_board_test():
@@ -47,11 +45,11 @@ def create_wifi_board_test():
 
 @wifi_board_tests_bp.route('', methods=['GET'])
 def get_all_wifi_board_tests():
-    """获取所有WiFi板测试记录"""
+    """获取所有WiFi板测试记录 (自动过滤已删除)"""
     try:
         # 添加分页支持
         page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)  # 限制最大每页数量
+        per_page = min(request.args.get('per_page', 20, type=int), 100)
         
         # 添加排序支持
         sort_by = request.args.get('sort_by', 'update_time')
@@ -61,6 +59,7 @@ def get_all_wifi_board_tests():
         wifi_board_sn = request.args.get('wifi_board_sn')
         general_test_result = request.args.get('general_test_result')
         
+        # 使用 WifiBoardTest.query 会自动过滤 is_deleted=False
         query = WifiBoardTest.query
         
         # 应用筛选条件
@@ -102,7 +101,8 @@ def get_all_wifi_board_tests():
 def get_wifi_board_test(test_id):
     """获取特定ID的WiFi板测试记录"""
     try:
-        test = db.session.get(WifiBoardTest, test_id)
+        # 使用 WifiBoardTest.query 会自动过滤 is_deleted=False
+        test = WifiBoardTest.query.filter_by(id=test_id).first()
         if test is None:
             return jsonify({'error': 'WiFi board test record not found'}), 404
         return jsonify(test.to_dict())
@@ -114,7 +114,8 @@ def get_wifi_board_test(test_id):
 def update_wifi_board_test(test_id):
     """更新特定ID的WiFi板测试记录"""
     try:
-        test = db.session.get(WifiBoardTest, test_id)
+        # 使用 WifiBoardTest.query 会自动过滤 is_deleted=False
+        test = WifiBoardTest.query.filter_by(id=test_id).first()
         if test is None:
             return jsonify({'error': 'WiFi board test record not found'}), 404
         
@@ -142,42 +143,32 @@ def update_wifi_board_test(test_id):
 
 @wifi_board_tests_bp.route('/<string:test_id>', methods=['DELETE'])
 def delete_wifi_board_test(test_id):
-    """删除特定ID的WiFi板测试记录"""
+    """软删除特定ID的WiFi板测试记录"""
     try:
-        test = db.session.get(WifiBoardTest, test_id)
+        # 使用 db.session.query 绕过 ActiveQuery，确保能找到记录
+        test = db.session.query(WifiBoardTest).filter_by(id=test_id).first()
         if test is None:
             return jsonify({'error': 'WiFi board test record not found'}), 404
-
-        logger.info(f"Deleting WiFi board test ID: {test_id}")
         
-        db.session.delete(test)
+        if test.is_deleted:
+            return jsonify({'message': 'Record already deleted'}), 200
+
+        logger.info(f"Soft-deleting WiFi board test ID: {test_id}")
+        
+        # 执行软删除
+        test.is_deleted = True
+        test.delete_time = datetime.now(timezone.utc)
+        
         db.session.commit()
         
-        logger.info(f"WiFi board test deleted successfully: {test_id}")
+        logger.info(f"WiFi board test soft-deleted successfully: {test_id}")
         return jsonify({'message': 'WiFi board test record deleted successfully'})
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error deleting WiFi board test {test_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# 辅助函数
 def parse_datetime(date_str):
     """解析日期时间字符串"""
     if not date_str:
@@ -192,7 +183,7 @@ def parse_datetime(date_str):
         raise ValueError(f"Invalid datetime format: {date_str}")
 
 def populate_test_fields(test, json_data, is_update=False):
-    """填充测试对象字段"""
+    """填充WiFi板测试对象字段"""
     # 基本字段
     if not is_update or 'wifi_board_sn' in json_data:
         test.wifi_board_sn = json_data.get('wifi_board_sn', test.wifi_board_sn if is_update else None)
@@ -226,10 +217,14 @@ def populate_test_fields(test, json_data, is_update=False):
     test.network_end_time = parse_datetime(json_data.get('network_end_time')) if 'network_end_time' in json_data else (test.network_end_time if is_update else None)
     
     # 通用信息
-    test.test_ip_address = json_data.get('test_ip_address', test.test_ip_address if is_update else None)
     test.start_time = parse_datetime(json_data.get('start_time')) if 'start_time' in json_data else (test.start_time if is_update else None)
     test.end_time = parse_datetime(json_data.get('end_time')) if 'end_time' in json_data else (test.end_time if is_update else None)
     test.general_test_remark = json_data.get('general_test_remark', test.general_test_remark if is_update else None)
+    
+    # 网络信息
+    test.local_ip = json_data.get('local_ip', test.local_ip if is_update else None)
+    test.public_ip = json_data.get('public_ip', test.public_ip if is_update else None)
+    test.hostname = json_data.get('hostname', test.hostname if is_update else None)
 
 def validate_required_fields(json_data):
     """验证必填字段"""

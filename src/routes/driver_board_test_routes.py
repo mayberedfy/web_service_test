@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from src.extensions import db
@@ -24,20 +24,13 @@ def create_driver_board_test():
             return jsonify(error), status
         
         logger.info(f"Creating driver board test for SN: {json_data['driver_board_sn']}")
-        print(f"Received data: {json_data}", flush=True)
-        with open('/tmp/pydebug.log', 'a') as f:
-            f.write(f"Received data: {json_data}\n")
+        
         new_test = DriverBoardTest()
         populate_test_fields(new_test, json_data)
         
-        print(f"Before commit - set_speed: {new_test.set_speed}", flush=True)
-        with open('/tmp/pydebug.log', 'a') as f:
-            f.write(f"Before commit - set_speed: {new_test.set_speed}\n")
         db.session.add(new_test)
         db.session.commit()
-        print(f"After commit - set_speed: {new_test.set_speed}", flush=True)
-        with open('/tmp/pydebug.log', 'a') as f:
-            f.write(f"After commit - set_speed: {new_test.set_speed}\n")
+        
         logger.info(f"Driver board test created successfully with ID: {new_test.id}")
         return jsonify(new_test.to_dict()), 201
         
@@ -52,27 +45,28 @@ def create_driver_board_test():
 
 @driver_board_tests_bp.route('', methods=['GET'])
 def get_all_driver_board_tests():
-    """获取所有驱动板测试记录"""
+    """获取所有驱动板测试记录 (自动过滤已删除)"""
     try:
         # 添加分页支持
         page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)  # 限制最大每页数量
+        per_page = min(request.args.get('per_page', 20, type=int), 100)
         
         # 添加排序支持
         sort_by = request.args.get('sort_by', 'update_time')
         sort_order = request.args.get('sort_order', 'desc')
         
-        # 添加筛选支持
+        # 修复字段名称
         driver_board_sn = request.args.get('driver_board_sn')
-        general_test_result = request.args.get('general_test_result')
+        driver_test_result = request.args.get('driver_test_result')
         
+        # 使用 DriverBoardTest.query 会自动过滤 is_deleted=False
         query = DriverBoardTest.query
         
         # 应用筛选条件
         if driver_board_sn:
             query = query.filter(DriverBoardTest.driver_board_sn.like(f'%{driver_board_sn}%'))
-        if general_test_result:
-            query = query.filter(DriverBoardTest.general_test_result == general_test_result)
+        if driver_test_result:
+            query = query.filter(DriverBoardTest.driver_test_result == driver_test_result)
         
         # 应用排序
         if hasattr(DriverBoardTest, sort_by):
@@ -107,7 +101,8 @@ def get_all_driver_board_tests():
 def get_driver_board_test(test_id):
     """获取特定ID的驱动板测试记录"""
     try:
-        test = db.session.get(DriverBoardTest, test_id)
+        # 使用 DriverBoardTest.query 会自动过滤 is_deleted=False
+        test = DriverBoardTest.query.filter_by(id=test_id).first()
         if test is None:
             return jsonify({'error': 'Driver board test record not found'}), 404
         return jsonify(test.to_dict())
@@ -119,7 +114,8 @@ def get_driver_board_test(test_id):
 def update_driver_board_test(test_id):
     """更新特定ID的驱动板测试记录"""
     try:
-        test = db.session.get(DriverBoardTest, test_id)
+        # 使用 DriverBoardTest.query 会自动过滤 is_deleted=False
+        test = DriverBoardTest.query.filter_by(id=test_id).first()
         if test is None:
             return jsonify({'error': 'Driver board test record not found'}), 404
         
@@ -147,18 +143,25 @@ def update_driver_board_test(test_id):
 
 @driver_board_tests_bp.route('/<string:test_id>', methods=['DELETE'])
 def delete_driver_board_test(test_id):
-    """删除特定ID的驱动板测试记录"""
+    """软删除特定ID的驱动板测试记录"""
     try:
-        test = db.session.get(DriverBoardTest, test_id)
+        # 使用 db.session.query 绕过 ActiveQuery，确保能找到记录
+        test = db.session.query(DriverBoardTest).filter_by(id=test_id).first()
         if test is None:
             return jsonify({'error': 'Driver board test record not found'}), 404
-
-        logger.info(f"Deleting driver board test ID: {test_id}")
         
-        db.session.delete(test)
+        if test.is_deleted:
+            return jsonify({'message': 'Record already deleted'}), 200
+
+        logger.info(f"Soft-deleting driver board test ID: {test_id}")
+        
+        # 执行软删除
+        test.is_deleted = True
+        test.delete_time = datetime.now(timezone.utc)
+        
         db.session.commit()
         
-        logger.info(f"Driver board test deleted successfully: {test_id}")
+        logger.info(f"Driver board test soft-deleted successfully: {test_id}")
         return jsonify({'message': 'Driver board test record deleted successfully'})
     except Exception as e:
         db.session.rollback()
@@ -184,8 +187,17 @@ def populate_test_fields(test, json_data, is_update=False):
     # 基本字段
     if not is_update or 'driver_board_sn' in json_data:
         test.driver_board_sn = json_data.get('driver_board_sn', test.driver_board_sn if is_update else None)
-    test.general_test_result = json_data.get('general_test_result', test.general_test_result if is_update else 'PENDING')
+    # 修正字段名称
+    test.driver_test_result = json_data.get('driver_test_result', test.driver_test_result if is_update else 'PENDING')
     
+    # 设置速度
+    if 'set_speed' in json_data:
+        try:
+            test.set_speed = int(json_data['set_speed']) if json_data['set_speed'] is not None else None
+        except (ValueError, TypeError):
+            raise ValueError("set_speed must be an integer (RPM)")
+    elif not is_update:
+        test.set_speed = None
     
     # 测试数值字段（实际测试数据）
     test.motor_status = json_data.get('motor_status', test.motor_status if is_update else None)
@@ -203,7 +215,6 @@ def populate_test_fields(test, json_data, is_update=False):
     test.output_power_result = json_data.get('output_power_result', test.output_power_result if is_update else None)
     test.driver_software_version_result = json_data.get('driver_software_version_result', test.driver_software_version_result if is_update else None)
     
-
     # 测试运行时间相关
     if 'test_runtime' in json_data:
         # 确保 test_runtime 是整数类型
@@ -217,11 +228,9 @@ def populate_test_fields(test, json_data, is_update=False):
 
     # 测试运行时间相关
     if 'set_speed' in json_data:
-        print(f"set_speed found in json_data: {json_data['set_speed']}")
         # 确保 set_speed 是整数类型
         try:
             test.set_speed = int(json_data['set_speed']) if json_data['set_speed'] is not None else None
-            print(f"set_speed set to: {test.set_speed}", flush=True)
         except (ValueError, TypeError):
             raise ValueError("set_speed must be an integer (RPM)")
     elif not is_update:
@@ -229,11 +238,20 @@ def populate_test_fields(test, json_data, is_update=False):
         test.set_speed = None
 
     # 通用信息
-    test.test_ip_address = json_data.get('test_ip_address', test.test_ip_address if is_update else None)
     test.start_time = parse_datetime(json_data.get('start_time')) if 'start_time' in json_data else (test.start_time if is_update else None)
     test.end_time = parse_datetime(json_data.get('end_time')) if 'end_time' in json_data else (test.end_time if is_update else None)
-    test.general_test_remark = json_data.get('test_remark', test.general_test_remark if is_update else None)
+    
+    # 描述信息
+    test.test_description = json_data.get('test_description', test.test_description if is_update else None)
+    test.general_test_remark = json_data.get('general_test_remark', test.general_test_remark if is_update else None)
+    
+    # 网络信息
+    test.local_ip = json_data.get('local_ip', test.local_ip if is_update else None)
+    test.public_ip = json_data.get('public_ip', test.public_ip if is_update else None)
+    test.hostname = json_data.get('hostname', test.hostname if is_update else None)
 
+
+    
 def validate_required_fields(json_data):
     """验证必填字段"""
     if 'driver_board_sn' not in json_data or not json_data['driver_board_sn']:
@@ -242,11 +260,17 @@ def validate_required_fields(json_data):
     if len(json_data['driver_board_sn']) > 32:
         return {'error': 'driver_board_sn too long (max 32 characters)'}, 400
     
-    # 验证 test_runtime 如果提供的话必须是整数
+    # 验证数字字段
     if 'test_runtime' in json_data and json_data['test_runtime'] is not None:
         try:
             int(json_data['test_runtime'])
         except (ValueError, TypeError):
             return {'error': 'test_runtime must be an integer (seconds)'}, 400
+    
+    if 'set_speed' in json_data and json_data['set_speed'] is not None:
+        try:
+            int(json_data['set_speed'])
+        except (ValueError, TypeError):
+            return {'error': 'set_speed must be an integer (RPM)'}, 400
     
     return None, None
