@@ -1,6 +1,6 @@
 import uuid
 import ulid
-from sqlalchemy import UUID, Boolean # Changed back to generic UUID
+from sqlalchemy import UUID, Boolean , Text
 from datetime import datetime, timezone, timedelta
 
 from src.extensions import db # Import the db instance
@@ -34,8 +34,10 @@ class WifiBoardTest(db.Model):
     knob_test_result = db.Column(db.String(64), nullable=True)
     speed_knob_result = db.Column(db.String(64), nullable=True)
     speed_knob_remark = db.Column(db.String(64), nullable=True)
+    speed_data = db.Column(Text, nullable=True)
     time_knob_result = db.Column(db.String(64), nullable=True)
     time_knob_remark = db.Column(db.String(64), nullable=True)
+    time_data = db.Column(Text, nullable=True)
     knob_start_time = db.Column(db.DateTime, nullable=True)
     knob_end_time = db.Column(db.DateTime, nullable=True)
 
@@ -43,6 +45,7 @@ class WifiBoardTest(db.Model):
     green_light_result = db.Column(db.String(64), nullable=True)
     red_light_result = db.Column(db.String(64), nullable=True)
     blue_light_result = db.Column(db.String(64), nullable=True)
+    light_data = db.Column(Text, nullable=True)
     light_start_time = db.Column(db.DateTime, nullable=True)
     light_end_time = db.Column(db.DateTime, nullable=True)
 
@@ -81,14 +84,17 @@ class WifiBoardTest(db.Model):
             'knob_test_result': self.knob_test_result,
             'speed_knob_result': self.speed_knob_result,
             'speed_knob_remark': self.speed_knob_remark,
+            'speed_data': self.speed_data,
             'time_knob_result': self.time_knob_result,
             'time_knob_remark': self.time_knob_remark,
+            'time_data': self.time_data,
             'knob_start_time': to_beijing_time(self.knob_start_time).isoformat() if self.knob_start_time else None,
             'knob_end_time': to_beijing_time(self.knob_end_time).isoformat() if self.knob_end_time else None,
             
             # 灯光测试相关
             'light_test_result': self.light_test_result,
             'green_light_result': self.green_light_result,
+            'light_data': self.light_data,
             'red_light_result': self.red_light_result,
             'blue_light_result': self.blue_light_result,
             'light_start_time': to_beijing_time(self.light_start_time).isoformat() if self.light_start_time else None,
