@@ -51,6 +51,7 @@ class WifiBoardTest(db.Model):
 
     network_test_result = db.Column(db.String(64), nullable=True)
     wifi_software_version = db.Column(db.String(64), nullable=True)
+    wifi_software_version_data = db.Column(db.String(64), nullable=True)
     mac_address = db.Column(db.String(64), nullable=True)
     start_command_result = db.Column(db.String(64), nullable=True)
     speed_command_result = db.Column(db.String(64), nullable=True)
@@ -103,7 +104,9 @@ class WifiBoardTest(db.Model):
             # 网络测试相关
             'network_test_result': self.network_test_result,
             'wifi_software_version': self.wifi_software_version,
+            'wifi_software_version_data': self.wifi_software_version_data,
             'mac_address': self.mac_address,
+            
             'start_command_result': self.start_command_result,
             'speed_command_result': self.speed_command_result,
             'stop_command_result': self.stop_command_result,

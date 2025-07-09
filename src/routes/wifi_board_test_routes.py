@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timezone
 import logging
+import json
 
 from src.extensions import db
 from src.models.wifi_board_test_model import WifiBoardTest
@@ -193,17 +194,17 @@ def populate_test_fields(test, json_data, is_update=False):
     test.knob_test_result = json_data.get('knob_test_result', test.knob_test_result if is_update else None)
     test.speed_knob_result = json_data.get('speed_knob_result', test.speed_knob_result if is_update else None)
     test.speed_knob_remark = json_data.get('speed_knob_remark', test.speed_knob_remark if is_update else None)
-    test.speed_data = json_data.get('speed_data', test.speed_data if is_update else None)
+    test.speed_data = json.dumps(json_data.get('speed_data', test.speed_data if is_update else []))
     test.time_knob_result = json_data.get('time_knob_result', test.time_knob_result if is_update else None)
     test.time_knob_remark = json_data.get('time_knob_remark', test.time_knob_remark if is_update else None)
-    test.time_data = json_data.get('time_data', test.time_data if is_update else None)
+    test.time_data = json.dumps(json_data.get('time_data', test.time_data if is_update else []))
     test.knob_start_time = parse_datetime(json_data.get('knob_start_time')) if 'knob_start_time' in json_data else (test.knob_start_time if is_update else None)
     test.knob_end_time = parse_datetime(json_data.get('knob_end_time')) if 'knob_end_time' in json_data else (test.knob_end_time if is_update else None)
     
     # 灯光测试相关
     test.light_test_result = json_data.get('light_test_result', test.light_test_result if is_update else None)
     test.green_light_result = json_data.get('green_light_result', test.green_light_result if is_update else None)
-    test.light_data = json_data.get('light_data', test.light_data if is_update else None)
+    test.light_data = json.dumps(json_data.get('light_data', test.light_data if is_update else []))
     test.red_light_result = json_data.get('red_light_result', test.red_light_result if is_update else None)
     test.blue_light_result = json_data.get('blue_light_result', test.blue_light_result if is_update else None)
     test.light_start_time = parse_datetime(json_data.get('light_start_time')) if 'light_start_time' in json_data else (test.light_start_time if is_update else None)
@@ -212,6 +213,7 @@ def populate_test_fields(test, json_data, is_update=False):
     # 网络测试相关
     test.network_test_result = json_data.get('network_test_result', test.network_test_result if is_update else None)
     test.wifi_software_version = json_data.get('wifi_software_version', test.wifi_software_version if is_update else None)
+    test.wifi_software_version_data = json_data.get('wifi_software_version_data', test.wifi_software_version_data if is_update else None)
     test.mac_address = json_data.get('mac_address', test.mac_address if is_update else None)
     test.start_command_result = json_data.get('start_command_result', test.start_command_result if is_update else None)
     test.speed_command_result = json_data.get('speed_command_result', test.speed_command_result if is_update else None)
