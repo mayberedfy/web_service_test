@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
+#root   rootcome
 class Config:
     # MySQL数据库配置
     SQLALCHEMY_DATABASE_URI = (

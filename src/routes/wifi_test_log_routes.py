@@ -30,7 +30,8 @@ def create_wifi_test_log():
             mac_address=json_data.get('mac_address'),
             local_ip=json_data.get('local_ip'),
             public_ip=json_data.get('public_ip'),
-            host_name=json_data.get('host_name')
+            host_name=json_data.get('host_name'),
+            app_version=json_data.get('app_version', '1.0.0'),
         )
 
         db.session.add(new_log)

@@ -68,6 +68,7 @@ class WifiBoardTest(db.Model):
     local_ip = db.Column(db.String(128), nullable=True)
     public_ip = db.Column(db.String(128), nullable=True)
     hostname = db.Column(db.String(255), nullable=True)
+    app_version = db.Column(db.String(128), nullable=True, default='1.0.0')
 
     # 新增审计和软删除字段
     create_time = db.Column(db.DateTime, default=db.func.current_timestamp())
@@ -122,6 +123,7 @@ class WifiBoardTest(db.Model):
             'local_ip': self.local_ip,
             'public_ip': self.public_ip,
             'hostname': self.hostname,
+            'app_version': self.app_version,
 
 
             # 审计和软删除字段

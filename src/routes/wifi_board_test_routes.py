@@ -230,6 +230,7 @@ def populate_test_fields(test, json_data, is_update=False):
     test.local_ip = json_data.get('local_ip', test.local_ip if is_update else None)
     test.public_ip = json_data.get('public_ip', test.public_ip if is_update else None)
     test.hostname = json_data.get('hostname', test.hostname if is_update else None)
+    test.app_version = json_data.get('app_version', test.app_version if is_update else '1.0.0')
 
 def validate_required_fields(json_data):
     """验证必填字段"""

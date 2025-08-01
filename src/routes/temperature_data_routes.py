@@ -212,6 +212,7 @@ def populate_data_fields(data, json_data, is_update=False):
     data.local_ip = json_data.get('local_ip', data.local_ip if is_update else None)
     data.public_ip = json_data.get('public_ip', data.public_ip if is_update else None)
     data.hostname = json_data.get('hostname', data.hostname if is_update else None)
+    data.app_version = json_data.get('app_version', data.app_version if is_update else '1.0.0')
     
     # 备注
     data.remark = json_data.get('remark', data.remark if is_update else None)

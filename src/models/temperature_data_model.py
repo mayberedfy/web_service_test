@@ -48,6 +48,7 @@ class TemperatureData(db.Model):
     local_ip = Column(String(128), nullable=True)
     public_ip = Column(String(128), nullable=True)
     hostname = Column(String(255), nullable=True)
+    app_version = db.Column(db.String(128), nullable=True, default='1.0.0')
     
     remark = Column(String(255), nullable=True)
     
@@ -82,6 +83,7 @@ class TemperatureData(db.Model):
             'local_ip': self.local_ip,
             'public_ip': self.public_ip,
             'hostname': self.hostname,
+            'app_version': self.app_version,
             
             'remark': self.remark,
             

@@ -56,6 +56,7 @@ class DriverBoardTest(db.Model):
     local_ip = db.Column(db.String(128), nullable=True)
     public_ip = db.Column(db.String(128), nullable=True)
     hostname = db.Column(db.String(255), nullable=True)
+    app_version = db.Column(db.String(128), nullable=True, default='1.0.0')
 
     create_time = db.Column(db.DateTime, default=db.func.current_timestamp())
     is_deleted = db.Column(Boolean, nullable=False, default=False, index=True)  
@@ -92,7 +93,8 @@ class DriverBoardTest(db.Model):
             'local_ip': self.local_ip,
             'public_ip': self.public_ip,
             'hostname': self.hostname,
-            
+            'app_version': self.app_version,
+
             'is_deleted': self.is_deleted,
             'delete_time': to_beijing_time(self.delete_time).isoformat() if self.delete_time else None,
             'create_time': to_beijing_time(self.create_time).isoformat() if self.create_time else None,

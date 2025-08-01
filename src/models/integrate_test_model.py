@@ -74,6 +74,7 @@ class IntegrateTest(db.Model):
     local_ip = Column(String(128), nullable=True)
     public_ip = Column(String(128), nullable=True)
     hostname = Column(String(255), nullable=True)
+    app_version = db.Column(db.String(128), nullable=True, default='1.0.0')
 
 
     ipm_temperature_data_id = Column(String(64), nullable=True)
@@ -121,6 +122,8 @@ class IntegrateTest(db.Model):
             'local_ip': self.local_ip,
             'public_ip': self.public_ip,
             'hostname': self.hostname,
+            'app_version': self.app_version,
+
             'ipm_temperature_data_id': self.ipm_temperature_data_id,
 
             'is_deleted': self.is_deleted,

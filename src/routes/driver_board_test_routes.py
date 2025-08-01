@@ -192,12 +192,15 @@ def populate_test_fields(test, json_data, is_update=False):
     
     # 设置速度
     if 'set_speed' in json_data:
-        try:
+        try:       
+            # 确保 set_speed 是整数类型
             test.set_speed = int(json_data['set_speed']) if json_data['set_speed'] is not None else None
         except (ValueError, TypeError):
             raise ValueError("set_speed must be an integer (RPM)")
     elif not is_update:
+        print("set_speed not found in json_data, setting to None", flush=True)
         test.set_speed = None
+
     
     # 测试数值字段（实际测试数据）
     test.motor_status = json_data.get('motor_status', test.motor_status if is_update else None)
@@ -226,16 +229,7 @@ def populate_test_fields(test, json_data, is_update=False):
         test.test_runtime = None
 
 
-    # 测试运行时间相关
-    if 'set_speed' in json_data:
-        # 确保 set_speed 是整数类型
-        try:
-            test.set_speed = int(json_data['set_speed']) if json_data['set_speed'] is not None else None
-        except (ValueError, TypeError):
-            raise ValueError("set_speed must be an integer (RPM)")
-    elif not is_update:
-        print("set_speed not found in json_data, setting to None", flush=True)
-        test.set_speed = None
+
 
     # 通用信息
     test.start_time = parse_datetime(json_data.get('start_time')) if 'start_time' in json_data else (test.start_time if is_update else None)
@@ -249,6 +243,7 @@ def populate_test_fields(test, json_data, is_update=False):
     test.local_ip = json_data.get('local_ip', test.local_ip if is_update else None)
     test.public_ip = json_data.get('public_ip', test.public_ip if is_update else None)
     test.hostname = json_data.get('hostname', test.hostname if is_update else None)
+    test.app_version = json_data.get('app_version', test.app_version if is_update else '1.0.0')
 
 
     

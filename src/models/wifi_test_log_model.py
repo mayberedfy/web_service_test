@@ -38,6 +38,7 @@ class WifiTestLog(db.Model):
     local_ip = db.Column(db.String(64), nullable=True)
     public_ip = db.Column(db.String(64), nullable=True)
     host_name = db.Column(db.String(255), nullable=True)
+    app_version = db.Column(db.String(128), nullable=True, default='1.0.0')
 
     is_deleted = db.Column(Boolean, nullable=False, default=False, index=True)
 
@@ -53,9 +54,12 @@ class WifiTestLog(db.Model):
             'wifi_board_sn': self.wifi_board_sn,
             'mac_address': self.mac_address,
             'raw_data': self.raw_data,
+            
             'local_ip': self.local_ip,
             'public_ip': self.public_ip,
             'host_name': self.host_name,
+            'app_version': self.app_version,
+
             'is_deleted': self.is_deleted, 
             # 使用辅助函数进行转换
             'create_time': to_beijing_time(self.create_time).isoformat() if self.create_time else None,
