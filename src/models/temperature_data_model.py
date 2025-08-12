@@ -14,10 +14,8 @@ def to_beijing_time(utc_dt):
 
 # 1. 创建一个自定义的Query类，它会自动过滤
 class ActiveQuery(db.Query):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # 自动为所有查询应用 is_deleted=False 的过滤器
-        self._criterion = self._criterion.filter_by(is_deleted=False)
+    def active(self):
+        return self.filter_by(is_deleted=False)
 
 class TemperatureData(db.Model):
     __tablename__ = 'temperature_datas'

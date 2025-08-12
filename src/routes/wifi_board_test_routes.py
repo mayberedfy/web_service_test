@@ -50,7 +50,7 @@ def get_all_wifi_board_tests():
     try:
         # 添加分页支持
         page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        per_page = min(request.args.get('per_page', 5, type=int), 100)
         
         # 添加排序支持
         sort_by = request.args.get('sort_by', 'update_time')
