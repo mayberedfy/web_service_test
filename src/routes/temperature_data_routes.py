@@ -10,6 +10,10 @@ temperature_data_bp = Blueprint('temperature_data_bp', __name__, url_prefix='/ap
 # 配置日志
 logger = logging.getLogger(__name__)
 
+
+
+
+
 @temperature_data_bp.route('', methods=['POST'])
 def create_temperature_data():
     """创建新的温度数据记录"""
@@ -43,13 +47,21 @@ def create_temperature_data():
         logger.error(f"Unexpected error creating temperature data: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
+
+
+
+
 @temperature_data_bp.route('', methods=['GET'])
 def get_all_temperature_data():
     """获取所有温度数据记录 (自动过滤已删除)"""
     try:
         # 添加分页支持
         page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        per_page = min(request.args.get('per_page', 20, type=int), 1000)
         
         # 添加排序支持
         sort_by = request.args.get('sort_by', 'update_time')
@@ -58,6 +70,9 @@ def get_all_temperature_data():
         # 添加筛选支持
         product_sn = request.args.get('product_sn')
         temperature_compensation_enabled = request.args.get('temperature_compensation_enabled')
+
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
         
         # 使用 TemperatureData.query 会自动过滤 is_deleted=False
         query = TemperatureData.query
@@ -65,6 +80,26 @@ def get_all_temperature_data():
         # 应用筛选条件
         if product_sn:
             query = query.filter(TemperatureData.product_sn.like(f'%{product_sn}%'))
+
+        # 应用时间范围筛选（基于 create_time 字段）
+        if start_date:
+            try:
+                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                query = query.filter(TemperatureData.start_time >= start_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        if end_date:
+            try:
+                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                # 如果是日期格式，包含当天的所有记录
+                if 'T' not in end_date:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                query = query.filter(TemperatureData.end_time <= end_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
+
+
         if temperature_compensation_enabled is not None:
             # 处理布尔值参数
             is_enabled = temperature_compensation_enabled.lower() in ['true', '1', 'yes']
@@ -99,6 +134,11 @@ def get_all_temperature_data():
         logger.error(f"Error fetching temperature data: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
+
 @temperature_data_bp.route('/<string:data_id>', methods=['GET'])
 def get_temperature_data(data_id):
     """获取特定ID的温度数据记录"""
@@ -111,6 +151,12 @@ def get_temperature_data(data_id):
     except Exception as e:
         logger.error(f"Error fetching temperature data {data_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+
+
+
+
 
 @temperature_data_bp.route('/<string:data_id>', methods=['PUT'])
 def update_temperature_data(data_id):

@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timezone
 import logging
+from sqlalchemy import func, case, text
 
 from src.extensions import db
 from src.models.integrate_test_model import IntegrateTest
@@ -43,6 +44,11 @@ def create_integrate_test():
         logger.error(f"Unexpected error creating integrate test: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
+
 @integrate_tests_bp.route('', methods=['GET'])
 def get_all_integrate_tests():
     """获取所有集成测试记录 (自动过滤已删除)"""
@@ -59,12 +65,35 @@ def get_all_integrate_tests():
         product_sn = request.args.get('product_sn')
         integrate_test_result = request.args.get('integrate_test_result')
         
+        # 时间范围筛选参数（支持 YYYY-MM-DD 或 ISO 格式）
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
         # 使用 IntegrateTest.query 会自动过滤 is_deleted=False
         query = IntegrateTest.query
-        
+
+        # 应用时间范围筛选（基于 create_time 字段）
+        if start_date:
+            try:
+                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                query = query.filter(IntegrateTest.create_time >= start_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
+
+        if end_date:
+            try:
+                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                # 如果是日期格式，包含当天的所有记录
+                if 'T' not in end_date:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                query = query.filter(IntegrateTest.create_time <= end_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
+
         # 应用筛选条件
         if product_sn:
             query = query.filter(IntegrateTest.product_sn.like(f'%{product_sn}%'))
+
         if integrate_test_result:
             query = query.filter(IntegrateTest.integrate_test_result == integrate_test_result)
         
@@ -167,6 +196,331 @@ def delete_integrate_test(test_id):
         db.session.rollback()
         logger.error(f"Error deleting integrate test {test_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@integrate_tests_bp.route('/stats', methods=['GET'])
+def get_integrate_test_stats():
+    """
+    获取集成测试统计信息
+    
+    支持的查询参数:
+    - start_date: 开始日期 (格式: YYYY-MM-DD 或 ISO格式)
+    - end_date: 结束日期 (格式: YYYY-MM-DD 或 ISO格式) 
+    - product_sn: 产品序列号 (支持模糊匹配)
+    
+    返回格式:
+    {
+        "total_count": 总记录数,
+        "success_count": 成功记录数,
+        "fail_count": 失败记录数,
+        "breakdown": {"pass": 10, "fail": 5},
+        "filters": {...}
+    }
+    """
+    try:
+        # 获取可选的筛选条件
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        product_sn = request.args.get('product_sn')
+        integrate_test_result = request.args.get('integrate_test_result')
+        
+        # 构建基础查询，自动过滤软删除记录
+        query = IntegrateTest.query.filter(IntegrateTest.is_deleted == False)
+        
+        # 应用时间范围筛选（基于create_time字段）
+        if start_date:
+            try:
+                # 支持多种日期格式
+                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                query = query.filter(IntegrateTest.create_time >= start_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        if end_date:
+            try:
+                # 结束日期加1天，确保包含当天的所有记录
+                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                if 'T' not in end_date:  # 如果是日期格式，则包含当天23:59:59
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                query = query.filter(IntegrateTest.create_time <= end_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        # 应用产品序列号筛选（模糊匹配）
+        if product_sn:
+            query = query.filter(IntegrateTest.product_sn.like(f'%{product_sn}%'))
+
+        if integrate_test_result:
+            query = query.filter(IntegrateTest.integrate_test_result == integrate_test_result)
+
+        # 使用单次聚合查询获取所有统计数据，提高查询效率
+        # 一次查询同时获取总数和各状态的统计
+        stats_result = db.session.query(
+            func.count(IntegrateTest.id).label('total_count'),
+            func.sum(case((IntegrateTest.integrate_test_result == 'pass', 1), else_=0)).label('success_count'),
+            func.sum(case((IntegrateTest.integrate_test_result == 'fail', 1), else_=0)).label('fail_count')
+        ).filter(query.whereclause if query.whereclause is not None else True).one()
+        
+        # 获取详细的状态分组统计（用于breakdown）
+        breakdown_stats = db.session.query(
+            IntegrateTest.integrate_test_result,
+            func.count(IntegrateTest.id).label('count')
+        ).filter(query.whereclause if query.whereclause is not None else True
+        ).group_by(IntegrateTest.integrate_test_result).all()
+        
+        # 转换结果为字典格式
+        total_count = int(stats_result.total_count or 0)
+        success_count = int(stats_result.success_count or 0)
+        fail_count = int(stats_result.fail_count or 0)
+        
+        # 构建详细分组统计
+        breakdown = {}
+        for result, count in breakdown_stats:
+            breakdown[result or 'unknown'] = int(count)
+        
+        # 计算其他状态的记录数
+        other_count = total_count - success_count - fail_count
+        
+        # 构建返回结果
+        response_data = {
+            'total_count': total_count,
+            'success_count': success_count,
+            'fail_count': fail_count,
+            'other_count': other_count,
+            'breakdown': breakdown,
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'product_sn': product_sn
+            }
+        }
+        
+        logger.info(f"Integrate test stats query completed. Total: {total_count}, Success: {success_count}, Fail: {fail_count}")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching integrate test stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@integrate_tests_bp.route('/boards-stats', methods=['GET'])
+def get_integrate_board_stats():
+    """
+    获取集成测试产品维度的统计信息
+    
+    支持的查询参数:
+    - start_date: 开始日期 (格式: YYYY-MM-DD 或 ISO格式)
+    - end_date: 结束日期 (格式: YYYY-MM-DD 或 ISO格式)
+    
+    返回格式:
+    {
+        "test_stats": {
+            "total_tests": 总测试次数,
+            "success_tests": 成功测试次数,
+            "fail_tests": 失败测试次数
+        },
+        "product_stats": {
+            "total_products": 总产品数,
+            "success_products": 成功产品数,
+            "fail_products": 失败产品数,
+            "success_breakdown": {
+                "always_success": 一直成功的产品数,
+                "final_success": 最终成功的产品数(有过失败)
+            },
+            "fail_breakdown": {
+                "always_fail": 一直失败的产品数,
+                "final_fail": 最终失败的产品数(有过成功)
+            }
+        },
+        "filters": {...}
+    }
+    """
+    try:
+        # 获取筛选条件
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        # 构建时间筛选条件
+        time_filter = ""
+        params = {}
+        
+        if start_date:
+            try:
+                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                time_filter += " AND create_time >= :start_date"
+                params['start_date'] = start_dt
+            except ValueError:
+                return jsonify({'error': 'Invalid start_date format'}), 400
+        
+        if end_date:
+            try:
+                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                if 'T' not in end_date:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                time_filter += " AND create_time <= :end_date"
+                params['end_date'] = end_dt
+            except ValueError:
+                return jsonify({'error': 'Invalid end_date format'}), 400
+        
+        # 1. 测试记录维度统计
+        test_stats_sql = text(f"""
+        SELECT 
+            COUNT(*) as total_tests,
+            SUM(CASE WHEN integrate_test_result = 'pass' THEN 1 ELSE 0 END) as success_tests,
+            SUM(CASE WHEN integrate_test_result = 'fail' THEN 1 ELSE 0 END) as fail_tests
+        FROM integrate_tests 
+        WHERE is_deleted = 0 {time_filter}
+        """)
+        
+        test_result = db.session.execute(test_stats_sql, params).fetchone()
+        
+        # 2. 产品维度统计 - 使用窗口函数获取每个产品的最新测试结果
+        product_stats_sql = text(f"""
+        WITH latest_tests AS (
+            SELECT 
+                product_sn,
+                integrate_test_result,
+                ROW_NUMBER() OVER (PARTITION BY product_sn ORDER BY create_time DESC) as rn
+            FROM integrate_tests 
+            WHERE is_deleted = 0 {time_filter}
+        ),
+        product_history AS (
+            SELECT 
+                product_sn,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN integrate_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN integrate_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count
+            FROM integrate_tests 
+            WHERE is_deleted = 0 {time_filter}
+            GROUP BY product_sn
+        )
+        SELECT 
+            COUNT(DISTINCT l.product_sn) as total_products,
+            SUM(CASE WHEN l.integrate_test_result = 'pass' THEN 1 ELSE 0 END) as success_products,
+            SUM(CASE WHEN l.integrate_test_result = 'fail' THEN 1 ELSE 0 END) as fail_products,
+            -- 一直成功的产品：最新是成功且从未失败
+            SUM(CASE 
+                WHEN l.integrate_test_result = 'pass' AND h.fail_count = 0 
+                THEN 1 ELSE 0 
+            END) as always_success_products,
+            -- 最终成功的产品：最新是成功但有过失败
+            SUM(CASE 
+                WHEN l.integrate_test_result = 'pass' AND h.fail_count > 0 
+                THEN 1 ELSE 0 
+            END) as final_success_products,
+            -- 一直失败的产品：最新是失败且从未成功
+            SUM(CASE 
+                WHEN l.integrate_test_result = 'fail' AND h.success_count = 0 
+                THEN 1 ELSE 0 
+            END) as always_fail_products,
+            -- 最终失败的产品：最新是失败但有过成功
+            SUM(CASE 
+                WHEN l.integrate_test_result = 'fail' AND h.success_count > 0 
+                THEN 1 ELSE 0 
+            END) as final_fail_products
+        FROM latest_tests l
+        JOIN product_history h ON l.product_sn = h.product_sn
+        WHERE l.rn = 1
+        """)
+        
+        product_result = db.session.execute(product_stats_sql, params).fetchone()
+        
+        # 构建返回结果
+        response_data = {
+            'test_stats': {
+                'total_tests': int(test_result.total_tests or 0),
+                'success_tests': int(test_result.success_tests or 0),
+                'fail_tests': int(test_result.fail_tests or 0)
+            },
+            'product_stats': {
+                'total_products': int(product_result.total_products or 0),
+                'success_products': int(product_result.success_products or 0),
+                'fail_products': int(product_result.fail_products or 0),
+                'success_breakdown': {
+                    'always_success': int(product_result.always_success_products or 0),
+                    'final_success': int(product_result.final_success_products or 0)
+                },
+                'fail_breakdown': {
+                    'always_fail': int(product_result.always_fail_products or 0),
+                    'final_fail': int(product_result.final_fail_products or 0)
+                }
+            },
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date
+            }
+        }
+        
+        logger.info(f"Integrate test product stats completed. Total products: {product_result.total_products}")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching integrate test product stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # 辅助函数
 def parse_datetime(date_str):
