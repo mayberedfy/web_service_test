@@ -11,11 +11,17 @@ dependencies = [
     "cryptography>=45.0.3",
     "flask>=2.3.0",
     "flask-sqlalchemy>=3.0.0",
+    "flask-jwt-extended>=4.5.0",
+    "flask-cors>=4.0.0",
+    "flask-migrate>=4.0.0",
+    "flask-limiter>=3.5.0",
     "pymysql>=1.1.0",
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
     "sshtunnel>=0.4.0",
     "ulid-py>=1.1.0",
+    "werkzeug>=2.3.0",
+    "bcrypt>=4.1.0",
 ]
 
 [project.optional-dependencies]

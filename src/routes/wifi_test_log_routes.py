@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from src.extensions import db
@@ -115,7 +115,7 @@ def delete_wifi_test_log(log_id):
         
         # 执行软删除
         log.is_deleted = True
-        log.delete_time = datetime.utcnow()
+        log.delete_time = datetime.now(timezone.utc)
         
         db.session.commit()
         

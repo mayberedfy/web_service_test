@@ -1,11 +1,12 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import json
 from sqlalchemy import func, case, text  # 添加text导入
 
 from src.extensions import db
 from src.models.wifi_board_test_model import WifiBoardTest
+from src.auth.decorators import require_auth, require_role
 
 wifi_board_tests_bp = Blueprint('wifi_board_tests_bp', __name__, url_prefix='/api/wifi_board_tests')
 
@@ -50,6 +51,7 @@ def create_wifi_board_test():
 
 
 
+@require_auth()
 @wifi_board_tests_bp.route('', methods=['GET'])
 def get_all_wifi_board_tests():
     """获取所有WiFi板测试记录 (自动过滤已删除)，支持分页、排序与筛选（包括时间范围）"""
@@ -77,6 +79,10 @@ def get_all_wifi_board_tests():
         if start_date:
             try:
                 start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                # 如果没有时区信息，假设是北京时间，转换为UTC
+                if start_dt.tzinfo is None:
+                    # 假设输入是北京时间(UTC+8)，转换为UTC
+                    start_dt = start_dt - timedelta(hours=8)
                 query = query.filter(WifiBoardTest.create_time >= start_dt)
             except ValueError:
                 return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
@@ -87,6 +93,10 @@ def get_all_wifi_board_tests():
                 # 如果是日期格式，包含当天的所有记录
                 if 'T' not in end_date:
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                # 如果没有时区信息，假设是北京时间，转换为UTC
+                if end_dt.tzinfo is None:
+                    # 假设输入是北京时间(UTC+8)，转换为UTC
+                    end_dt = end_dt - timedelta(hours=8)
                 query = query.filter(WifiBoardTest.create_time <= end_dt)
             except ValueError:
                 return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
@@ -132,6 +142,7 @@ def get_all_wifi_board_tests():
         logger.error(f"Error fetching WiFi board tests: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@require_auth()
 @wifi_board_tests_bp.route('/<string:test_id>', methods=['GET'])
 def get_wifi_board_test(test_id):
     """获取特定ID的WiFi板测试记录"""
@@ -145,6 +156,7 @@ def get_wifi_board_test(test_id):
         logger.error(f"Error fetching WiFi board test {test_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@require_auth()
 @wifi_board_tests_bp.route('/<string:test_id>', methods=['PUT'])
 def update_wifi_board_test(test_id):
     """更新特定ID的WiFi板测试记录"""
@@ -176,6 +188,11 @@ def update_wifi_board_test(test_id):
         logger.error(f"Error updating WiFi board test {test_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+@require_auth()
+@require_role('admin')
 @wifi_board_tests_bp.route('/<string:test_id>', methods=['DELETE'])
 def delete_wifi_board_test(test_id):
     """软删除特定ID的WiFi板测试记录"""
@@ -220,6 +237,7 @@ def delete_wifi_board_test(test_id):
 
 
 
+@require_auth()
 @wifi_board_tests_bp.route('/stats', methods=['GET'])
 def get_wifi_board_test_stats():
     """
@@ -255,6 +273,10 @@ def get_wifi_board_test_stats():
             try:
                 # 支持多种日期格式
                 start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                # 如果没有时区信息，假设是北京时间，转换为UTC
+                if start_dt.tzinfo is None:
+                    # 假设输入是北京时间(UTC+8)，转换为UTC
+                    start_dt = start_dt - timedelta(hours=8)
                 query = query.filter(WifiBoardTest.create_time >= start_dt)
             except ValueError:
                 return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
@@ -265,6 +287,10 @@ def get_wifi_board_test_stats():
                 end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
                 if 'T' not in end_date:  # 如果是日期格式，则包含当天23:59:59
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                # 如果没有时区信息，假设是北京时间，转换为UTC
+                if end_dt.tzinfo is None:
+                    # 假设输入是北京时间(UTC+8)，转换为UTC
+                    end_dt = end_dt - timedelta(hours=8)
                 query = query.filter(WifiBoardTest.create_time <= end_dt)
             except ValueError:
                 return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
@@ -347,6 +373,7 @@ def get_wifi_board_test_stats():
 
 
 
+@require_auth()
 @wifi_board_tests_bp.route('/boards-stats', methods=['GET'])
 def get_wifi_board_stats():
     """
@@ -516,6 +543,403 @@ def get_wifi_board_stats():
 
 
 
+
+
+
+
+
+
+
+
+@require_auth()
+@wifi_board_tests_bp.route('/time-stats', methods=['GET'])
+def get_wifi_board_time_stats():
+    """
+    获取WiFi板测试时间趋势统计信息
+    
+    支持的查询参数:
+    - start_date: 开始日期 (格式: YYYY-MM-DD，北京时间)
+    - end_date: 结束日期 (格式: YYYY-MM-DD，北京时间)
+    - interval: 统计间隔 (day, week, month，默认day)
+    
+    返回格式:
+    {
+        "time_stats": [
+            {
+                "time_period": "2024-01-15",
+                "total_tests": 25,
+                "success_count": 20,
+                "fail_count": 5
+            }
+        ],
+        "filters": {
+            "start_date": "2024-01-15",
+            "end_date": "2024-01-21",
+            "interval": "day"
+        }
+    }
+    """
+    try:
+        # 获取查询参数
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        interval = request.args.get('interval', 'day').lower()
+        
+        # 验证时间间隔参数
+        valid_intervals = ['day', 'week', 'month']
+        if interval not in valid_intervals:
+            return jsonify({'error': f'Invalid interval. Must be one of: {", ".join(valid_intervals)}'}), 400
+
+        # 设置默认时间范围（如果未提供）
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
+        if not end_date:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+
+        # 解析时间范围并转换为UTC（前端传入北京时间）
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            
+            # 北京时间转UTC（减8小时）
+            start_dt = start_dt - timedelta(hours=8)
+            end_dt = end_dt - timedelta(hours=8)
+                
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD format'}), 400
+
+        # 构建筛选条件
+        conditions = ["wbt.is_deleted = FALSE"]
+        conditions.append(f"wbt.create_time >= '{start_dt.isoformat()}'")
+        conditions.append(f"wbt.create_time <= '{end_dt.isoformat()}'")
+
+        # 根据间隔类型设置时间格式化（转换回北京时间显示）
+        interval_formats = {
+            'day': "DATE_FORMAT(CONVERT_TZ(wbt.create_time, '+00:00', '+08:00'), '%Y-%m-%d')",
+            'week': "DATE_FORMAT(DATE_SUB(CONVERT_TZ(wbt.create_time, '+00:00', '+08:00'), INTERVAL WEEKDAY(CONVERT_TZ(wbt.create_time, '+00:00', '+08:00')) DAY), '%Y-%m-%d')",
+            'month': "DATE_FORMAT(CONVERT_TZ(wbt.create_time, '+00:00', '+08:00'), '%Y-%m-01')"
+        }
+        
+        time_group = interval_formats[interval]
+        where_clause = " AND ".join(conditions)
+        
+        # 使用 CTE 构建时间趋势查询
+        stats_query = f"""
+        WITH filtered_tests AS (
+            SELECT 
+                wbt.general_test_result,
+                {time_group} as time_period
+            FROM wifi_board_tests wbt
+            WHERE {where_clause}
+        ),
+        time_aggregates AS (
+            SELECT 
+                time_period,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN general_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN general_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count
+            FROM filtered_tests
+            GROUP BY time_period
+            ORDER BY time_period ASC
+        )
+        SELECT * FROM time_aggregates
+        """
+        
+        # 执行统计查询
+        result = db.session.execute(text(stats_query))
+        time_stats_data = [dict(row._mapping) for row in result]
+        
+        # 格式化返回数据
+        formatted_stats = []
+        for row in time_stats_data:
+            formatted_stats.append({
+                'time_period': str(row['time_period']),
+                'total_tests': int(row['total_tests']),
+                'success_count': int(row['success_count']),
+                'fail_count': int(row['fail_count'])
+            })
+        
+        response_data = {
+            'time_stats': formatted_stats,
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'interval': interval
+            }
+        }
+        
+        logger.info(f"WiFi board time stats query completed. Found {len(formatted_stats)} time periods")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching WiFi board time stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@require_auth()
+@wifi_board_tests_bp.route('/sn-stats', methods=['GET'])
+def get_wifi_board_sn_stats():
+    """
+    获取WiFi板SN码聚合统计信息
+    
+    支持的查询参数:
+    - start_date: 开始日期 (格式: YYYY-MM-DD，北京时间)
+    - end_date: 结束日期 (格式: YYYY-MM-DD，北京时间)
+    - wifi_board_sn: WiFi板序列号 (支持模糊匹配)
+    - sort_by: 排序字段 (wifi_board_sn, total_tests, success_tests, fail_tests, latest_test_time, latest_result)
+    - sort_order: 排序方向 (asc, desc，默认desc)
+    - page: 页码 (默认1)
+    - per_page: 每页数量 (默认20，最大100)
+    
+    返回格式:
+    {
+        "data": [
+            {
+                "wifi_board_sn": "SN001",
+                "total_tests": 15,
+                "success_tests": 12,
+                "fail_tests": 3,
+                "success_rate": 80.0,
+                "latest_test_time": "2024-01-15T10:30:00(北京时间)",
+                "latest_result": "pass",
+                "first_test_time": "2024-01-01T09:00:00(北京时间)"
+            }
+        ],
+        "pagination": {...},
+        "summary": {
+            "total_boards": 100,
+            "total_tests": 1500,
+            "avg_tests_per_board": 15.0
+        }
+    }
+    """
+    try:
+        # 获取查询参数
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        sort_by = request.args.get('sort_by', 'latest_test_time')
+        sort_order = request.args.get('sort_order', 'desc').lower()
+        
+        # 过滤参数
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        wifi_board_sn = request.args.get('wifi_board_sn')
+        
+        # 构建时间筛选条件（北京时间转UTC）
+        time_filter = ""
+        params = {}
+        
+        if start_date:
+            try:
+                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                # 北京时间转UTC（减8小时）
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt - timedelta(hours=8)
+                time_filter += " AND create_time >= :start_date"
+                params['start_date'] = start_dt
+            except ValueError:
+                return jsonify({'error': 'Invalid start_date format'}), 400
+        
+        if end_date:
+            try:
+                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                if 'T' not in end_date:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                # 北京时间转UTC（减8小时）
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt - timedelta(hours=8)
+                time_filter += " AND create_time <= :end_date"
+                params['end_date'] = end_dt
+            except ValueError:
+                return jsonify({'error': 'Invalid end_date format'}), 400
+        
+        # SN码过滤条件
+        sn_filter = ""
+        if wifi_board_sn:
+            sn_filter = " AND wifi_board_sn LIKE :wifi_board_sn"
+            params['wifi_board_sn'] = f'%{wifi_board_sn}%'
+        
+        # 验证排序字段
+        valid_sort_fields = {
+            'wifi_board_sn': 'wifi_board_sn',
+            'total_tests': 'total_tests', 
+            'success_tests': 'success_tests',
+            'fail_tests': 'fail_tests',
+            'success_rate': 'success_rate',
+            'latest_test_time': 'latest_test_time',
+            'latest_result': 'latest_result',
+            'first_test_time': 'first_test_time'
+        }
+        
+        if sort_by not in valid_sort_fields:
+            sort_by = 'latest_test_time'
+        
+        if sort_order not in ['asc', 'desc']:
+            sort_order = 'desc'
+        
+        # 构建高效的统计查询SQL（返回时间转换为北京时间）
+        stats_sql = text(f"""
+        WITH board_stats AS (
+            SELECT 
+                wifi_board_sn,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN general_test_result = 'pass' THEN 1 ELSE 0 END) as success_tests,
+                SUM(CASE WHEN general_test_result = 'fail' THEN 1 ELSE 0 END) as fail_tests,
+                ROUND(
+                    (SUM(CASE WHEN general_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
+                    2
+                ) as success_rate,
+                CONVERT_TZ(MIN(create_time), '+00:00', '+08:00') as first_test_time,
+                CONVERT_TZ(MAX(create_time), '+00:00', '+08:00') as latest_test_time
+            FROM wifi_board_tests 
+            WHERE is_deleted = 0 {time_filter} {sn_filter}
+            GROUP BY wifi_board_sn
+        ),
+        latest_results AS (
+            SELECT DISTINCT
+                wifi_board_sn,
+                FIRST_VALUE(general_test_result) OVER (
+                    PARTITION BY wifi_board_sn 
+                    ORDER BY create_time DESC
+                ) as latest_result
+            FROM wifi_board_tests 
+            WHERE is_deleted = 0 {time_filter} {sn_filter}
+        )
+        SELECT 
+            bs.wifi_board_sn,
+            bs.total_tests,
+            bs.success_tests,
+            bs.fail_tests,
+            bs.success_rate,
+            bs.first_test_time,
+            bs.latest_test_time,
+            lr.latest_result
+        FROM board_stats bs
+        LEFT JOIN latest_results lr ON bs.wifi_board_sn = lr.wifi_board_sn
+        ORDER BY {valid_sort_fields[sort_by]} {sort_order.upper()}
+        LIMIT :per_page OFFSET :offset
+        """)
+        
+        # 计算偏移量
+        offset = (page - 1) * per_page
+        params.update({
+            'per_page': per_page,
+            'offset': offset
+        })
+        
+        # 执行统计查询
+        results = db.session.execute(stats_sql, params).fetchall()
+        
+        # 获取总数查询（用于分页）
+        count_sql = text(f"""
+        SELECT COUNT(DISTINCT wifi_board_sn) as total_count
+        FROM wifi_board_tests 
+        WHERE is_deleted = 0 {time_filter} {sn_filter}
+        """)
+        
+        count_params = {k: v for k, v in params.items() if k not in ['per_page', 'offset']}
+        total_count = db.session.execute(count_sql, count_params).fetchone().total_count
+        
+        # 获取汇总统计信息
+        summary_sql = text(f"""
+        SELECT 
+            COUNT(DISTINCT wifi_board_sn) as total_boards,
+            COUNT(*) as total_tests,
+            ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT wifi_board_sn), 2) as avg_tests_per_board,
+            SUM(CASE WHEN general_test_result = 'pass' THEN 1 ELSE 0 END) as total_success,
+            SUM(CASE WHEN general_test_result = 'fail' THEN 1 ELSE 0 END) as total_fail
+        FROM wifi_board_tests 
+        WHERE is_deleted = 0 {time_filter} {sn_filter}
+        """)
+        
+        summary_result = db.session.execute(summary_sql, count_params).fetchone()
+        
+        # 转换结果为字典列表
+        data = []
+        for row in results:
+            data.append({
+                'wifi_board_sn': row.wifi_board_sn,
+                'total_tests': int(row.total_tests),
+                'success_tests': int(row.success_tests),
+                'fail_tests': int(row.fail_tests),
+                'success_rate': float(row.success_rate) if row.success_rate else 0.0,
+                'first_test_time': row.first_test_time.isoformat() if row.first_test_time else None,
+                'latest_test_time': row.latest_test_time.isoformat() if row.latest_test_time else None,
+                'latest_result': row.latest_result or 'unknown'
+            })
+        
+        # 计算分页信息
+        total_pages = (total_count + per_page - 1) // per_page
+        
+        # 构建返回结果
+        response_data = {
+            'data': data,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': int(total_count),
+                'pages': total_pages,
+                'has_next': page < total_pages,
+                'has_prev': page > 1
+            },
+            'summary': {
+                'total_boards': int(summary_result.total_boards or 0),
+                'total_tests': int(summary_result.total_tests or 0),
+                'avg_tests_per_board': float(summary_result.avg_tests_per_board or 0),
+                'total_success': int(summary_result.total_success or 0),
+                'total_fail': int(summary_result.total_fail or 0)
+            },
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'wifi_board_sn': wifi_board_sn,
+                'sort_by': sort_by,
+                'sort_order': sort_order
+            }
+        }
+        
+        logger.info(f"WiFi board SN stats completed. Total boards: {total_count}, Page: {page}")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching WiFi board SN stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 

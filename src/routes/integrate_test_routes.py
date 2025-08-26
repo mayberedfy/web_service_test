@@ -1,10 +1,11 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 from sqlalchemy import func, case, text
 
 from src.extensions import db
 from src.models.integrate_test_model import IntegrateTest
+from src.auth.decorators import require_auth, require_role
 
 integrate_tests_bp = Blueprint('integrate_tests_bp', __name__, url_prefix='/api/integrate_tests')
 
@@ -48,7 +49,7 @@ def create_integrate_test():
 
 
 
-
+@require_auth()
 @integrate_tests_bp.route('', methods=['GET'])
 def get_all_integrate_tests():
     """获取所有集成测试记录 (自动过滤已删除)"""
@@ -126,6 +127,10 @@ def get_all_integrate_tests():
         logger.error(f"Error fetching integrate tests: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+@require_auth()
 @integrate_tests_bp.route('/<string:test_id>', methods=['GET'])
 def get_integrate_test(test_id):
     """获取特定ID的集成测试记录"""
@@ -139,6 +144,17 @@ def get_integrate_test(test_id):
         logger.error(f"Error fetching integrate test {test_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
+
+
+
+
+
+
+@require_role('admin')
 @integrate_tests_bp.route('/<string:test_id>', methods=['PUT'])
 def update_integrate_test(test_id):
     """更新特定ID的集成测试记录"""
@@ -170,6 +186,13 @@ def update_integrate_test(test_id):
         logger.error(f"Error updating integrate test {test_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
+
+
+@require_role('admin')
 @integrate_tests_bp.route('/<string:test_id>', methods=['DELETE'])
 def delete_integrate_test(test_id):
     """软删除特定ID的集成测试记录"""
@@ -211,7 +234,7 @@ def delete_integrate_test(test_id):
 
 
 
-
+@require_auth()
 @integrate_tests_bp.route('/stats', methods=['GET'])
 def get_integrate_test_stats():
     """
@@ -346,7 +369,7 @@ def get_integrate_test_stats():
 
 
 
-
+@require_auth()
 @integrate_tests_bp.route('/boards-stats', methods=['GET'])
 def get_integrate_board_stats():
     """
@@ -611,3 +634,348 @@ def validate_required_fields(json_data):
             return {'error': 'test_runtime must be an integer (seconds)'}, 400
     
     return None, None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@require_auth()
+@integrate_tests_bp.route('/sn-stats', methods=['GET'])
+def get_integrate_sn_stats():
+    """
+    获取集成测试的序列号统计信息
+    包含每个序列号的测试次数、成功率、最新测试时间等
+    
+    查询参数:
+    - start_date: 开始日期 (YYYY-MM-DD，北京时间)
+    - end_date: 结束日期 (YYYY-MM-DD，北京时间)
+    - product_sn: 产品序列号筛选 (部分匹配)
+    - integrate_test_result: 测试结果筛选 (pass/fail)
+    - page: 页码 (默认: 1)
+    - per_page: 每页记录数 (默认: 10, 最大: 100)
+    
+    返回格式:
+    {
+        "sn_stats": [
+            {
+                "product_sn": "序列号",
+                "total_tests": 总测试次数,
+                "success_count": 成功次数,
+                "fail_count": 失败次数,
+                "success_rate": 成功率百分比,
+                "latest_test_time": "最新测试时间(北京时间)",
+                "first_test_time": "首次测试时间(北京时间)"
+            }
+        ],
+        "pagination": {
+            "page": 当前页码,
+            "per_page": 每页记录数,
+            "total": 总序列号数量,
+            "pages": 总页数
+        },
+        "filters": {...}
+    }
+    """
+    try:
+        # 获取查询参数
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        product_sn = request.args.get('product_sn')
+        integrate_test_result = request.args.get('integrate_test_result')
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 10)), 100)
+
+        # 构建 CTE 查询以优化性能
+        cte_conditions = ["it.is_deleted = FALSE"]
+        
+        # 时间范围条件（北京时间转UTC）
+        if start_date:
+            try:
+                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                # 北京时间转UTC（减8小时）
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt - timedelta(hours=8)
+                cte_conditions.append(f"it.create_time >= '{start_dt.isoformat()}'")
+            except ValueError:
+                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        if end_date:
+            try:
+                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                if 'T' not in end_date:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                # 北京时间转UTC（减8小时）
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt - timedelta(hours=8)
+                cte_conditions.append(f"it.create_time <= '{end_dt.isoformat()}'")
+            except ValueError:
+                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        # 序列号筛选条件
+        if product_sn:
+            cte_conditions.append(f"it.product_sn LIKE '%{product_sn}%'")
+        
+        if integrate_test_result:
+            cte_conditions.append(f"it.integrate_test_result = '{integrate_test_result}'")
+
+        # 构建CTE查询
+        cte_where_clause = " AND ".join(cte_conditions)
+        
+        # 使用 CTE 和窗口函数进行高效聚合统计（返回北京时间）
+        stats_query = f"""
+        WITH filtered_tests AS (
+            SELECT 
+                it.product_sn,
+                it.integrate_test_result,
+                CONVERT_TZ(it.create_time, '+00:00', '+08:00') as local_create_time
+            FROM integrate_tests it
+            WHERE {cte_where_clause}
+        ),
+        sn_aggregates AS (
+            SELECT 
+                product_sn,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN integrate_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN integrate_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count,
+                MAX(local_create_time) as latest_test_time,
+                MIN(local_create_time) as first_test_time,
+                ROUND(
+                    (SUM(CASE WHEN integrate_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
+                    2
+                ) as success_rate
+            FROM filtered_tests
+            WHERE product_sn IS NOT NULL AND product_sn != ''
+            GROUP BY product_sn
+            ORDER BY total_tests DESC, success_rate DESC
+            LIMIT {per_page} OFFSET {(page - 1) * per_page}
+        )
+        SELECT * FROM sn_aggregates
+        """
+        
+        # 执行统计查询
+        result = db.session.execute(text(stats_query))
+        sn_stats_data = [dict(row._mapping) for row in result]
+        
+        # 获取总数统计（用于分页）
+        count_query = f"""
+        WITH filtered_tests AS (
+            SELECT DISTINCT it.product_sn
+            FROM integrate_tests it
+            WHERE {cte_where_clause}
+              AND it.product_sn IS NOT NULL 
+              AND it.product_sn != ''
+        )
+        SELECT COUNT(*) as total_sn_count FROM filtered_tests
+        """
+        
+        count_result = db.session.execute(text(count_query))
+        total_sn_count = count_result.scalar()
+        
+        # 格式化返回数据
+        formatted_stats = []
+        for row in sn_stats_data:
+            formatted_stats.append({
+                'product_sn': row['product_sn'],
+                'total_tests': int(row['total_tests']),
+                'success_count': int(row['success_count']),
+                'fail_count': int(row['fail_count']),
+                'success_rate': float(row['success_rate']),
+                'latest_test_time': row['latest_test_time'].isoformat() if row['latest_test_time'] else None,
+                'first_test_time': row['first_test_time'].isoformat() if row['first_test_time'] else None
+            })
+        
+        # 构建分页信息
+        total_pages = (total_sn_count + per_page - 1) // per_page
+        
+        response_data = {
+            'sn_stats': formatted_stats,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total_sn_count,
+                'pages': total_pages
+            },
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'product_sn': product_sn,
+                'integrate_test_result': integrate_test_result
+            }
+        }
+        
+        logger.info(f"Integrate test SN stats query completed. Found {len(formatted_stats)} SN records, total SNs: {total_sn_count}")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching integrate test SN stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@require_auth()
+@integrate_tests_bp.route('/time-stats', methods=['GET'])
+def get_integrate_time_stats():
+    """
+    获取集成测试时间趋势统计信息
+    
+    支持的查询参数:
+    - start_date: 开始日期 (格式: YYYY-MM-DD，北京时间)
+    - end_date: 结束日期 (格式: YYYY-MM-DD，北京时间)
+    - interval: 统计间隔 (day, week, month，默认day)
+    
+    返回格式:
+    {
+        "time_stats": [
+            {
+                "time_period": "2024-01-15",
+                "total_tests": 25,
+                "success_count": 20,
+                "fail_count": 5
+            }
+        ],
+        "filters": {
+            "start_date": "2024-01-15",
+            "end_date": "2024-01-21",
+            "interval": "day"
+        }
+    }
+    """
+    try:
+        # 获取查询参数
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        interval = request.args.get('interval', 'day').lower()
+        
+        # 验证时间间隔参数
+        valid_intervals = ['day', 'week', 'month']
+        if interval not in valid_intervals:
+            return jsonify({'error': f'Invalid interval. Must be one of: {", ".join(valid_intervals)}'}), 400
+
+        # 设置默认时间范围（如果未提供）
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        if not end_date:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+
+        # 解析时间范围并转换为UTC（前端传入北京时间）
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            
+            # 北京时间转UTC（减8小时）
+            start_dt = start_dt - timedelta(hours=8)
+            end_dt = end_dt - timedelta(hours=8)
+                
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD format'}), 400
+
+        # 构建筛选条件
+        conditions = ["it.is_deleted = FALSE"]
+        conditions.append(f"it.create_time >= '{start_dt.isoformat()}'")
+        conditions.append(f"it.create_time <= '{end_dt.isoformat()}'")
+
+        # 根据间隔类型设置时间格式化（转换回北京时间显示）
+        interval_formats = {
+            'day': "DATE_FORMAT(CONVERT_TZ(it.create_time, '+00:00', '+08:00'), '%Y-%m-%d')",
+            'week': "DATE_FORMAT(DATE_SUB(CONVERT_TZ(it.create_time, '+00:00', '+08:00'), INTERVAL WEEKDAY(CONVERT_TZ(it.create_time, '+00:00', '+08:00')) DAY), '%Y-%m-%d')",
+            'month': "DATE_FORMAT(CONVERT_TZ(it.create_time, '+00:00', '+08:00'), '%Y-%m-01')"
+        }
+        
+        time_group = interval_formats[interval]
+        where_clause = " AND ".join(conditions)
+        
+        # 使用 CTE 构建时间趋势查询
+        stats_query = f"""
+        WITH filtered_tests AS (
+            SELECT 
+                it.integrate_test_result,
+                {time_group} as time_period
+            FROM integrate_tests it
+            WHERE {where_clause}
+        ),
+        time_aggregates AS (
+            SELECT 
+                time_period,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN integrate_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN integrate_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count
+            FROM filtered_tests
+            GROUP BY time_period
+            ORDER BY time_period ASC
+        )
+        SELECT * FROM time_aggregates
+        """
+        
+        # 执行统计查询
+        result = db.session.execute(text(stats_query))
+        time_stats_data = [dict(row._mapping) for row in result]
+        
+        # 格式化返回数据
+        formatted_stats = []
+        for row in time_stats_data:
+            formatted_stats.append({
+                'time_period': str(row['time_period']),
+                'total_tests': int(row['total_tests']),
+                'success_count': int(row['success_count']),
+                'fail_count': int(row['fail_count'])
+            })
+        
+        response_data = {
+            'time_stats': formatted_stats,
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'interval': interval
+            }
+        }
+        
+        logger.info(f"Integrate test time stats query completed. Found {len(formatted_stats)} time periods")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching integrate test time stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500

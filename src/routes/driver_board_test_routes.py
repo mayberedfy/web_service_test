@@ -1,15 +1,24 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 from sqlalchemy import func, case, text  # 确保导入了 text
 
 from src.extensions import db
 from src.models.driver_board_test_model import DriverBoardTest
 
+from src.auth.decorators import require_auth, require_role
+
+
+
+
 driver_board_tests_bp = Blueprint('driver_board_tests_bp', __name__, url_prefix='/api/driver_board_tests')
 
 # 配置日志
 logger = logging.getLogger(__name__)
+
+
+
+
 
 @driver_board_tests_bp.route('', methods=['POST'])
 def create_driver_board_test():
@@ -56,6 +65,7 @@ def create_driver_board_test():
 
 
 
+@require_auth()
 @driver_board_tests_bp.route('', methods=['GET'])
 def get_all_driver_board_tests():
     """获取所有驱动板测试记录 (自动过滤已删除)"""
@@ -151,6 +161,7 @@ def get_all_driver_board_tests():
 
 
 
+@require_auth()
 @driver_board_tests_bp.route('/<string:test_id>', methods=['GET'])
 def get_driver_board_test(test_id):
     """获取特定ID的驱动板测试记录"""
@@ -195,6 +206,13 @@ def update_driver_board_test(test_id):
         logger.error(f"Error updating driver board test {test_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
+
+
+@require_role('admin')
 @driver_board_tests_bp.route('/<string:test_id>', methods=['DELETE'])
 def delete_driver_board_test(test_id):
     """软删除特定ID的驱动板测试记录"""
@@ -232,7 +250,7 @@ def delete_driver_board_test(test_id):
 
 
 
-
+@require_auth()
 @driver_board_tests_bp.route('/stats', methods=['GET'])
 def get_driver_board_test_stats():
     """
@@ -268,6 +286,10 @@ def get_driver_board_test_stats():
             try:
                 # 支持多种日期格式
                 start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                # 如果没有时区信息，假设是北京时间，转换为UTC
+                if start_dt.tzinfo is None:
+                    # 假设输入是北京时间(UTC+8)，转换为UTC
+                    start_dt = start_dt - timedelta(hours=8)
                 query = query.filter(DriverBoardTest.create_time >= start_dt)
             except ValueError:
                 return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
@@ -278,6 +300,10 @@ def get_driver_board_test_stats():
                 end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
                 if 'T' not in end_date:  # 如果是日期格式，则包含当天23:59:59
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                # 如果没有时区信息，假设是北京时间，转换为UTC
+                if end_dt.tzinfo is None:
+                    # 假设输入是北京时间(UTC+8)，转换为UTC
+                    end_dt = end_dt - timedelta(hours=8)
                 query = query.filter(DriverBoardTest.create_time <= end_dt)
             except ValueError:
                 return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
@@ -346,9 +372,7 @@ def get_driver_board_test_stats():
 
 
 
-
-
-
+@require_auth()
 @driver_board_tests_bp.route('/boards-stats', methods=['GET'])
 def get_driver_board_stats():
     """
@@ -503,7 +527,336 @@ def get_driver_board_stats():
     except Exception as e:
         logger.error(f"Error fetching driver board stats: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
-# ...existing code...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@require_auth()
+@driver_board_tests_bp.route('/sn-stats', methods=['GET'])
+def get_driver_board_sn_stats():
+    """
+    获取驱动板测试的序列号统计信息
+    包含每个序列号的测试次数、成功率、最新测试时间等
+    
+    查询参数:
+    - start_date: 开始日期 (YYYY-MM-DD，北京时间)
+    - end_date: 结束日期 (YYYY-MM-DD，北京时间)
+    - driver_board_sn: 驱动板序列号筛选 (部分匹配)
+    - driver_test_result: 测试结果筛选 (pass/fail)
+    - page: 页码 (默认: 1)
+    - per_page: 每页记录数 (默认: 10, 最大: 100)
+    
+    返回格式:
+    {
+        "sn_stats": [
+            {
+                "driver_board_sn": "序列号",
+                "total_tests": 总测试次数,
+                "success_count": 成功次数,
+                "fail_count": 失败次数,
+                "success_rate": 成功率百分比,
+                "latest_test_time": "最新测试时间(北京时间)",
+                "first_test_time": "首次测试时间(北京时间)"
+            }
+        ],
+        "pagination": {
+            "page": 当前页码,
+            "per_page": 每页记录数,
+            "total": 总序列号数量,
+            "pages": 总页数
+        },
+        "filters": {...}
+    }
+    """
+    try:
+        # 获取查询参数
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        driver_board_sn = request.args.get('driver_board_sn')
+        driver_test_result = request.args.get('driver_test_result')
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 10)), 100)
+
+        # 构建 CTE 查询以优化性能
+        cte_conditions = ["dbt.is_deleted = FALSE"]
+        
+        # 时间范围条件（北京时间转UTC）
+        if start_date:
+            try:
+                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                # 北京时间转UTC（减8小时）
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt - timedelta(hours=8)
+                cte_conditions.append(f"dbt.create_time >= '{start_dt.isoformat()}'")
+            except ValueError:
+                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        if end_date:
+            try:
+                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                if 'T' not in end_date:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                # 北京时间转UTC（减8小时）
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt - timedelta(hours=8)
+                cte_conditions.append(f"dbt.create_time <= '{end_dt.isoformat()}'")
+            except ValueError:
+                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        # 序列号筛选条件
+        if driver_board_sn:
+            cte_conditions.append(f"dbt.driver_board_sn LIKE '%{driver_board_sn}%'")
+        
+        if driver_test_result:
+            cte_conditions.append(f"dbt.driver_test_result = '{driver_test_result}'")
+
+        # 构建CTE查询
+        cte_where_clause = " AND ".join(cte_conditions)
+        
+        # 使用 CTE 和窗口函数进行高效聚合统计（返回北京时间）
+        stats_query = f"""
+        WITH filtered_tests AS (
+            SELECT 
+                dbt.driver_board_sn,
+                dbt.driver_test_result,
+                CONVERT_TZ(dbt.create_time, '+00:00', '+08:00') as local_create_time
+            FROM driver_board_tests dbt
+            WHERE {cte_where_clause}
+        ),
+        sn_aggregates AS (
+            SELECT 
+                driver_board_sn,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN driver_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN driver_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count,
+                MAX(local_create_time) as latest_test_time,
+                MIN(local_create_time) as first_test_time,
+                ROUND(
+                    (SUM(CASE WHEN driver_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
+                    2
+                ) as success_rate
+            FROM filtered_tests
+            WHERE driver_board_sn IS NOT NULL AND driver_board_sn != ''
+            GROUP BY driver_board_sn
+            ORDER BY total_tests DESC, success_rate DESC
+            LIMIT {per_page} OFFSET {(page - 1) * per_page}
+        )
+        SELECT * FROM sn_aggregates
+        """
+        
+        # 执行统计查询
+        result = db.session.execute(text(stats_query))
+        sn_stats_data = [dict(row._mapping) for row in result]
+        
+        # 获取总数统计（用于分页）
+        count_query = f"""
+        WITH filtered_tests AS (
+            SELECT DISTINCT dbt.driver_board_sn
+            FROM driver_board_tests dbt
+            WHERE {cte_where_clause}
+              AND dbt.driver_board_sn IS NOT NULL 
+              AND dbt.driver_board_sn != ''
+        )
+        SELECT COUNT(*) as total_sn_count FROM filtered_tests
+        """
+        
+        count_result = db.session.execute(text(count_query))
+        total_sn_count = count_result.scalar()
+        
+        # 格式化返回数据
+        formatted_stats = []
+        for row in sn_stats_data:
+            formatted_stats.append({
+                'driver_board_sn': row['driver_board_sn'],
+                'total_tests': int(row['total_tests']),
+                'success_count': int(row['success_count']),
+                'fail_count': int(row['fail_count']),
+                'success_rate': float(row['success_rate']),
+                'latest_test_time': row['latest_test_time'].isoformat() if row['latest_test_time'] else None,
+                'first_test_time': row['first_test_time'].isoformat() if row['first_test_time'] else None
+            })
+        
+        # 构建分页信息
+        total_pages = (total_sn_count + per_page - 1) // per_page
+        
+        response_data = {
+            'sn_stats': formatted_stats,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total_sn_count,
+                'pages': total_pages
+            },
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'driver_board_sn': driver_board_sn,
+                'driver_test_result': driver_test_result
+            }
+        }
+        
+        logger.info(f"Driver board SN stats query completed. Found {len(formatted_stats)} SN records, total SNs: {total_sn_count}")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching driver board SN stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@require_auth()
+@driver_board_tests_bp.route('/time-stats', methods=['GET'])
+def get_driver_board_time_stats():
+    """
+    获取驱动板测试时间趋势统计信息
+    
+    支持的查询参数:
+    - start_date: 开始日期 (格式: YYYY-MM-DD，北京时间)
+    - end_date: 结束日期 (格式: YYYY-MM-DD，北京时间)
+    - interval: 统计间隔 (day, week, month，默认day)
+    
+    返回格式:
+    {
+        "time_stats": [
+            {
+                "time_period": "2024-01-15",
+                "total_tests": 25,
+                "success_count": 20,
+                "fail_count": 5
+            }
+        ],
+        "filters": {
+            "start_date": "2024-01-15",
+            "end_date": "2024-01-21",
+            "interval": "day"
+        }
+    }
+    """
+    try:
+        # 获取查询参数
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        interval = request.args.get('interval', 'day').lower()
+        
+        # 验证时间间隔参数
+        valid_intervals = ['day', 'week', 'month']
+        if interval not in valid_intervals:
+            return jsonify({'error': f'Invalid interval. Must be one of: {", ".join(valid_intervals)}'}), 400
+
+        # 设置默认时间范围（如果未提供）
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
+        if not end_date:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+
+        # 解析时间范围并转换为UTC（前端传入北京时间）
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            
+            # 北京时间转UTC（减8小时）
+            start_dt = start_dt - timedelta(hours=8)
+            end_dt = end_dt - timedelta(hours=8)
+                
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD format'}), 400
+
+        # 构建筛选条件
+        conditions = ["dbt.is_deleted = FALSE"]
+        conditions.append(f"dbt.create_time >= '{start_dt.isoformat()}'")
+        conditions.append(f"dbt.create_time <= '{end_dt.isoformat()}'")
+
+        # 根据间隔类型设置时间格式化（转换回北京时间显示）
+        interval_formats = {
+            'day': "DATE_FORMAT(CONVERT_TZ(dbt.create_time, '+00:00', '+08:00'), '%Y-%m-%d')",
+            'week': "DATE_FORMAT(DATE_SUB(CONVERT_TZ(dbt.create_time, '+00:00', '+08:00'), INTERVAL WEEKDAY(CONVERT_TZ(dbt.create_time, '+00:00', '+08:00')) DAY), '%Y-%m-%d')",
+            'month': "DATE_FORMAT(CONVERT_TZ(dbt.create_time, '+00:00', '+08:00'), '%Y-%m-01')"
+        }
+        
+        time_group = interval_formats[interval]
+        where_clause = " AND ".join(conditions)
+        
+        # 使用 CTE 构建时间趋势查询
+        stats_query = f"""
+        WITH filtered_tests AS (
+            SELECT 
+                dbt.driver_test_result,
+                {time_group} as time_period
+            FROM driver_board_tests dbt
+            WHERE {where_clause}
+        ),
+        time_aggregates AS (
+            SELECT 
+                time_period,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN driver_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN driver_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count
+            FROM filtered_tests
+            GROUP BY time_period
+            ORDER BY time_period ASC
+        )
+        SELECT * FROM time_aggregates
+        """
+        
+        # 执行统计查询
+        result = db.session.execute(text(stats_query))
+        time_stats_data = [dict(row._mapping) for row in result]
+        
+        # 格式化返回数据
+        formatted_stats = []
+        for row in time_stats_data:
+            formatted_stats.append({
+                'time_period': str(row['time_period']),
+                'total_tests': int(row['total_tests']),
+                'success_count': int(row['success_count']),
+                'fail_count': int(row['fail_count'])
+            })
+        
+        response_data = {
+            'time_stats': formatted_stats,
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'interval': interval
+            }
+        }
+        
+        logger.info(f"Driver board time stats query completed. Found {len(formatted_stats)} time periods")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching driver board time stats: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+    
+
+
+
 
 
 

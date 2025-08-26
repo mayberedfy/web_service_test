@@ -5,6 +5,9 @@ import logging
 from src.extensions import db
 from src.models.temperature_data_model import TemperatureData
 
+# 导入 require_auth 装饰器
+from src.auth.decorators import require_auth, require_role, require_permission
+
 temperature_data_bp = Blueprint('temperature_data_bp', __name__, url_prefix='/api/temperature_data')
 
 # 配置日志
@@ -56,6 +59,7 @@ def create_temperature_data():
 
 
 @temperature_data_bp.route('', methods=['GET'])
+@require_auth()
 def get_all_temperature_data():
     """获取所有温度数据记录 (自动过滤已删除)"""
     try:
@@ -81,23 +85,42 @@ def get_all_temperature_data():
         if product_sn:
             query = query.filter(TemperatureData.product_sn.like(f'%{product_sn}%'))
 
-        # 应用时间范围筛选（基于 create_time 字段）
+        # # 应用时间范围筛选（基于 create_time 字段）
+        # if start_date:
+        #     try:
+        #         start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+        #         query = query.filter(TemperatureData.start_time >= start_dt)
+        #     except ValueError:
+        #         return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
+        
+        # if end_date:
+        #     try:
+        #         end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+        #         # 如果是日期格式，包含当天的所有记录
+        #         if 'T' not in end_date:
+        #             end_dt = end_dt.replace(hour=23, minute=59, second=59)
+        #         query = query.filter(TemperatureData.end_time <= end_dt)
+        #     except ValueError:
+        #         return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
+        # 应用时间范围筛选（基于 start_time / end_time 字段）
         if start_date:
             try:
-                start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
-                query = query.filter(TemperatureData.start_time >= start_dt)
+                # 将日期时间字符串解析为 datetime：
+                # - 支持 ISO 格式 (带 T 或带时区)
+                # - 支持 "YYYY-MM-DD HH:MM:SS" / "YYYY-MM-DD HH:MM"
+                # - 支持 "YYYY-MM-DD"（若仅到日，则视为当天 00:00:00）
+                start_dt = parse_datetime_seconds(start_date, default_to_end=False)
+                query = query.filter(TemperatureData.create_time >= start_dt)
             except ValueError:
-                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
-        
+                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD, YYYY-MM-DD HH:MM:SS or ISO format'}), 400
+
         if end_date:
             try:
-                end_dt = parse_datetime(end_date) if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
-                # 如果是日期格式，包含当天的所有记录
-                if 'T' not in end_date:
-                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
-                query = query.filter(TemperatureData.end_time <= end_dt)
+                # 解析结束时间；若只到日期，则默认包含当天 23:59:59
+                end_dt = parse_datetime_seconds(end_date, default_to_end=True)
+                query = query.filter(TemperatureData.create_time <= end_dt)
             except ValueError:
-                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
+                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD, YYYY-MM-DD HH:MM:SS or ISO format'}), 400
 
 
         if temperature_compensation_enabled is not None:
@@ -140,6 +163,7 @@ def get_all_temperature_data():
 
 
 @temperature_data_bp.route('/<string:data_id>', methods=['GET'])
+@require_auth()
 def get_temperature_data(data_id):
     """获取特定ID的温度数据记录"""
     try:
@@ -159,6 +183,7 @@ def get_temperature_data(data_id):
 
 
 @temperature_data_bp.route('/<string:data_id>', methods=['PUT'])
+@require_auth()
 def update_temperature_data(data_id):
     """更新特定ID的温度数据记录"""
     try:
@@ -189,7 +214,13 @@ def update_temperature_data(data_id):
         logger.error(f"Error updating temperature data {data_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
 @temperature_data_bp.route('/<string:data_id>', methods=['DELETE'])
+@require_auth()
+@require_role('admin')  # 只有管理员可以删除
 def delete_temperature_data(data_id):
     """软删除特定ID的温度数据记录"""
     try:
@@ -216,6 +247,59 @@ def delete_temperature_data(data_id):
         logger.error(f"Error deleting temperature data {data_id}: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def parse_datetime_seconds(date_str, default_to_end: bool = False):
+    """解析日期时间字符串并返回 datetime。
+    支持格式：
+      - ISO 8601 （例如 '2025-08-21T15:30:00' 或 带时区 '2025-08-21T15:30:00+00:00'）
+      - 'YYYY-MM-DD HH:MM:SS' 或 'YYYY-MM-DD HH:MM'
+      - 'YYYY-MM-DD' （当 default_to_end=False 返回当天 00:00:00；default_to_end=True 返回当天 23:59:59）
+    抛出 ValueError 当格式不匹配。
+    """
+    if not date_str:
+        raise ValueError("empty date string")
+    # ISO 格式优先
+    if 'T' in date_str:
+        try:
+            # fromisoformat 支持带时区偏移
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        except Exception as e:
+            raise ValueError(f"Invalid ISO datetime: {date_str}") from e
+
+    # 非 ISO：尝试带时分秒或仅日期
+    formats = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M']
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+
+    # 只有日期 'YYYY-MM-DD'
+    try:
+        d = datetime.strptime(date_str, '%Y-%m-%d')
+        if default_to_end:
+            return d.replace(hour=23, minute=59, second=59)
+        return d.replace(hour=0, minute=0, second=0)
+    except ValueError:
+        raise ValueError(f"Invalid datetime format: {date_str}")
+
+
+
+
+
 # 辅助函数
 def parse_datetime(date_str):
     """解析日期时间字符串"""
@@ -229,6 +313,21 @@ def parse_datetime(date_str):
             return datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
     except ValueError:
         raise ValueError(f"Invalid datetime format: {date_str}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def populate_data_fields(data, json_data, is_update=False):
     """填充温度数据对象字段"""
