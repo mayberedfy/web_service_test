@@ -549,14 +549,16 @@ def get_driver_board_stats():
 @driver_board_tests_bp.route('/sn-stats', methods=['GET'])
 def get_driver_board_sn_stats():
     """
-    获取驱动板测试的序列号统计信息
-    包含每个序列号的测试次数、成功率、最新测试时间等
+    获取驱动板测试的序列号统计信息 (板子维度)
+    每块板子一行数据，测试结果=该板子最新一次测试的结果
     
     查询参数:
     - start_date: 开始日期 (YYYY-MM-DD，北京时间)
     - end_date: 结束日期 (YYYY-MM-DD，北京时间)
     - driver_board_sn: 驱动板序列号筛选 (部分匹配)
-    - driver_test_result: 测试结果筛选 (pass/fail)
+    - latest_result: 筛选最新测试结果为pass/fail的板子
+    - sort_by: 排序字段 (driver_board_sn, total_tests, pass_count, fail_count, pass_rate, latest_test_time, first_test_time, latest_result)
+    - sort_order: 排序方向 (asc, desc，默认desc)
     - page: 页码 (默认: 1)
     - per_page: 每页记录数 (默认: 10, 最大: 100)
     
@@ -566,11 +568,12 @@ def get_driver_board_sn_stats():
             {
                 "driver_board_sn": "序列号",
                 "total_tests": 总测试次数,
-                "success_count": 成功次数,
+                "pass_count": 成功次数,
                 "fail_count": 失败次数,
-                "success_rate": 成功率百分比,
+                "pass_rate": 成功率百分比,
                 "latest_test_time": "最新测试时间(北京时间)",
-                "first_test_time": "首次测试时间(北京时间)"
+                "first_test_time": "首次测试时间(北京时间)",
+                "latest_result": "最新测试结果(pass/fail)"
             }
         ],
         "pagination": {
@@ -587,11 +590,31 @@ def get_driver_board_sn_stats():
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         driver_board_sn = request.args.get('driver_board_sn')
-        driver_test_result = request.args.get('driver_test_result')
+        latest_result = request.args.get('latest_result')
+        sort_by = request.args.get('sort_by', 'total_tests')
+        sort_order = request.args.get('sort_order', 'desc').lower()
         page = int(request.args.get('page', 1))
         per_page = min(int(request.args.get('per_page', 10)), 100)
 
-        # 构建 CTE 查询以优化性能
+        # 验证排序参数
+        valid_sort_fields = {
+            'driver_board_sn': 'driver_board_sn',
+            'total_tests': 'total_tests',
+            'pass_count': 'pass_count', 
+            'fail_count': 'fail_count',
+            'pass_rate': 'pass_rate',
+            'latest_test_time': 'latest_test_time',
+            'first_test_time': 'first_test_time',
+            'latest_result': 'latest_result'
+        }
+        
+        if sort_by not in valid_sort_fields:
+            sort_by = 'total_tests'
+        
+        if sort_order not in ['asc', 'desc']:
+            sort_order = 'desc'
+
+        # 构建 CTE 查询以优化性能（时间筛选条件，不包含driver_test_result）
         cte_conditions = ["dbt.is_deleted = FALSE"]
         
         # 时间范围条件（北京时间转UTC）
@@ -620,62 +643,92 @@ def get_driver_board_sn_stats():
         # 序列号筛选条件
         if driver_board_sn:
             cte_conditions.append(f"dbt.driver_board_sn LIKE '%{driver_board_sn}%'")
-        
-        if driver_test_result:
-            cte_conditions.append(f"dbt.driver_test_result = '{driver_test_result}'")
 
         # 构建CTE查询
         cte_where_clause = " AND ".join(cte_conditions)
         
-        # 使用 CTE 和窗口函数进行高效聚合统计（返回北京时间）
+        # 板子维度统计：每块板子一行数据，基于最新测试结果筛选
         stats_query = f"""
-        WITH filtered_tests AS (
+        WITH board_all_tests AS (
             SELECT 
                 dbt.driver_board_sn,
                 dbt.driver_test_result,
-                CONVERT_TZ(dbt.create_time, '+00:00', '+08:00') as local_create_time
+                dbt.create_time,
+                CONVERT_TZ(dbt.create_time, '+00:00', '+08:00') as local_create_time,
+                ROW_NUMBER() OVER (PARTITION BY dbt.driver_board_sn ORDER BY dbt.create_time DESC) as rn
             FROM driver_board_tests dbt
             WHERE {cte_where_clause}
         ),
-        sn_aggregates AS (
+        board_latest_result AS (
             SELECT 
                 driver_board_sn,
+                driver_test_result as latest_result,
+                local_create_time as latest_test_time
+            FROM board_all_tests
+            WHERE rn = 1
+        ),
+        board_stats AS (
+            SELECT 
+                bat.driver_board_sn,
                 COUNT(*) as total_tests,
-                SUM(CASE WHEN driver_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
-                SUM(CASE WHEN driver_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count,
-                MAX(local_create_time) as latest_test_time,
-                MIN(local_create_time) as first_test_time,
+                SUM(CASE WHEN bat.driver_test_result = 'pass' THEN 1 ELSE 0 END) as pass_count,
+                SUM(CASE WHEN bat.driver_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count,
+                MIN(bat.local_create_time) as first_test_time,
                 ROUND(
-                    (SUM(CASE WHEN driver_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
+                    (SUM(CASE WHEN bat.driver_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
                     2
-                ) as success_rate
-            FROM filtered_tests
-            WHERE driver_board_sn IS NOT NULL AND driver_board_sn != ''
-            GROUP BY driver_board_sn
-            ORDER BY total_tests DESC, success_rate DESC
-            LIMIT {per_page} OFFSET {(page - 1) * per_page}
+                ) as pass_rate
+            FROM board_all_tests bat
+            WHERE bat.driver_board_sn IS NOT NULL AND bat.driver_board_sn != ''
+            GROUP BY bat.driver_board_sn
         )
-        SELECT * FROM sn_aggregates
+        SELECT 
+            bs.driver_board_sn,
+            bs.total_tests,
+            bs.pass_count,
+            bs.fail_count,
+            bs.pass_rate,
+            bs.first_test_time,
+            blr.latest_test_time,
+            blr.latest_result
+        FROM board_stats bs
+        JOIN board_latest_result blr ON bs.driver_board_sn = blr.driver_board_sn
+        WHERE 1=1 {" AND blr.latest_result = '" + latest_result + "'" if latest_result else ""}
+        ORDER BY {valid_sort_fields[sort_by]} {sort_order.upper()}
+        LIMIT {per_page} OFFSET {(page - 1) * per_page}
         """
         
         # 执行统计查询
         result = db.session.execute(text(stats_query))
         sn_stats_data = [dict(row._mapping) for row in result]
         
-        # 获取总数统计（用于分页）
+        # 获取总数统计（用于分页）- 基于板子维度和最新结果筛选
         count_query = f"""
-        WITH filtered_tests AS (
-            SELECT DISTINCT dbt.driver_board_sn
+        WITH board_all_tests AS (
+            SELECT 
+                dbt.driver_board_sn,
+                dbt.driver_test_result,
+                dbt.create_time,
+                ROW_NUMBER() OVER (PARTITION BY dbt.driver_board_sn ORDER BY dbt.create_time DESC) as rn
             FROM driver_board_tests dbt
             WHERE {cte_where_clause}
-              AND dbt.driver_board_sn IS NOT NULL 
-              AND dbt.driver_board_sn != ''
+        ),
+        board_latest_result AS (
+            SELECT 
+                driver_board_sn,
+                driver_test_result as latest_result
+            FROM board_all_tests
+            WHERE rn = 1
+              AND driver_board_sn IS NOT NULL 
+              AND driver_board_sn != ''
         )
-        SELECT COUNT(*) as total_sn_count FROM filtered_tests
+        SELECT COUNT(*) as total_board_count 
+        FROM board_latest_result
+        WHERE 1=1 {" AND latest_result = '" + latest_result + "'" if latest_result else ""}
         """
         
         count_result = db.session.execute(text(count_query))
-        total_sn_count = count_result.scalar()
+        total_board_count = count_result.scalar()
         
         # 格式化返回数据
         formatted_stats = []
@@ -683,33 +736,36 @@ def get_driver_board_sn_stats():
             formatted_stats.append({
                 'driver_board_sn': row['driver_board_sn'],
                 'total_tests': int(row['total_tests']),
-                'success_count': int(row['success_count']),
+                'pass_count': int(row['pass_count']),
                 'fail_count': int(row['fail_count']),
-                'success_rate': float(row['success_rate']),
+                'pass_rate': float(row['pass_rate']),
                 'latest_test_time': row['latest_test_time'].isoformat() if row['latest_test_time'] else None,
-                'first_test_time': row['first_test_time'].isoformat() if row['first_test_time'] else None
+                'first_test_time': row['first_test_time'].isoformat() if row['first_test_time'] else None,
+                'latest_result': row['latest_result']
             })
         
         # 构建分页信息
-        total_pages = (total_sn_count + per_page - 1) // per_page
+        total_pages = (total_board_count + per_page - 1) // per_page
         
         response_data = {
             'sn_stats': formatted_stats,
             'pagination': {
                 'page': page,
                 'per_page': per_page,
-                'total': total_sn_count,
+                'total': total_board_count,
                 'pages': total_pages
             },
             'filters': {
                 'start_date': start_date,
                 'end_date': end_date,
                 'driver_board_sn': driver_board_sn,
-                'driver_test_result': driver_test_result
+                'latest_result': latest_result,
+                'sort_by': sort_by,
+                'sort_order': sort_order
             }
         }
         
-        logger.info(f"Driver board SN stats query completed. Found {len(formatted_stats)} SN records, total SNs: {total_sn_count}")
+        logger.info(f"Driver board SN stats query completed. Found {len(formatted_stats)} board records, total boards: {total_board_count}")
         return jsonify(response_data)
         
     except Exception as e:

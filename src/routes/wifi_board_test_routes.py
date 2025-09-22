@@ -716,65 +716,83 @@ def get_wifi_board_time_stats():
 @wifi_board_tests_bp.route('/sn-stats', methods=['GET'])
 def get_wifi_board_sn_stats():
     """
-    获取WiFi板SN码聚合统计信息
+    获取WiFi板测试的序列号统计信息 (板子维度)
+    每块板子一行数据，测试结果=该板子最新一次测试的结果
     
-    支持的查询参数:
-    - start_date: 开始日期 (格式: YYYY-MM-DD，北京时间)
-    - end_date: 结束日期 (格式: YYYY-MM-DD，北京时间)
-    - wifi_board_sn: WiFi板序列号 (支持模糊匹配)
-    - sort_by: 排序字段 (wifi_board_sn, total_tests, success_tests, fail_tests, latest_test_time, latest_result)
+    查询参数:
+    - start_date: 开始日期 (YYYY-MM-DD，北京时间)
+    - end_date: 结束日期 (YYYY-MM-DD，北京时间)
+    - wifi_board_sn: WiFi板序列号筛选 (部分匹配)
+    - latest_result: 筛选最新测试结果 (pass/fail)
+    - sort_by: 排序字段 (wifi_board_sn, total_tests, pass_count, fail_count, pass_rate, latest_test_time, first_test_time, latest_result)
     - sort_order: 排序方向 (asc, desc，默认desc)
-    - page: 页码 (默认1)
-    - per_page: 每页数量 (默认20，最大100)
+    - page: 页码 (默认: 1)
+    - per_page: 每页记录数 (默认: 10, 最大: 100)
     
     返回格式:
     {
-        "data": [
+        "sn_stats": [
             {
-                "wifi_board_sn": "SN001",
-                "total_tests": 15,
-                "success_tests": 12,
-                "fail_tests": 3,
-                "success_rate": 80.0,
-                "latest_test_time": "2024-01-15T10:30:00(北京时间)",
-                "latest_result": "pass",
-                "first_test_time": "2024-01-01T09:00:00(北京时间)"
+                "wifi_board_sn": "序列号",
+                "total_tests": 总测试次数,
+                "pass_count": 成功次数,
+                "fail_count": 失败次数,
+                "pass_rate": 成功率百分比,
+                "latest_test_time": "最新测试时间(北京时间)",
+                "first_test_time": "首次测试时间(北京时间)",
+                "latest_result": "最新测试结果(pass/fail)"
             }
         ],
-        "pagination": {...},
-        "summary": {
-            "total_boards": 100,
-            "total_tests": 1500,
-            "avg_tests_per_board": 15.0
-        }
+        "pagination": {
+            "page": 当前页码,
+            "per_page": 每页记录数,
+            "total": 总序列号数量,
+            "pages": 总页数
+        },
+        "filters": {...}
     }
     """
     try:
         # 获取查询参数
-        page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)
-        sort_by = request.args.get('sort_by', 'latest_test_time')
-        sort_order = request.args.get('sort_order', 'desc').lower()
-        
-        # 过滤参数
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         wifi_board_sn = request.args.get('wifi_board_sn')
+        latest_result = request.args.get('latest_result')
+        sort_by = request.args.get('sort_by', 'total_tests')
+        sort_order = request.args.get('sort_order', 'desc').lower()
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 10)), 100)
+
+        # 验证排序参数
+        valid_sort_fields = {
+            'wifi_board_sn': 'wifi_board_sn',
+            'total_tests': 'total_tests',
+            'pass_count': 'pass_count', 
+            'fail_count': 'fail_count',
+            'pass_rate': 'pass_rate',
+            'latest_test_time': 'latest_test_time',
+            'first_test_time': 'first_test_time',
+            'latest_result': 'latest_result'
+        }
         
-        # 构建时间筛选条件（北京时间转UTC）
-        time_filter = ""
-        params = {}
+        if sort_by not in valid_sort_fields:
+            sort_by = 'total_tests'
         
+        if sort_order not in ['asc', 'desc']:
+            sort_order = 'desc'
+        # 构建 CTE 查询以优化性能（时间筛选条件，不包含latest_result）
+        cte_conditions = ["wbt.is_deleted = FALSE"]
+        
+        # 时间范围条件（北京时间转UTC）
         if start_date:
             try:
                 start_dt = parse_datetime(start_date) if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
                 # 北京时间转UTC（减8小时）
                 if start_dt.tzinfo is None:
                     start_dt = start_dt - timedelta(hours=8)
-                time_filter += " AND create_time >= :start_date"
-                params['start_date'] = start_dt
+                cte_conditions.append(f"wbt.create_time >= '{start_dt.isoformat()}'")
             except ValueError:
-                return jsonify({'error': 'Invalid start_date format'}), 400
+                return jsonify({'error': 'Invalid start_date format. Use YYYY-MM-DD or ISO format'}), 400
         
         if end_date:
             try:
@@ -784,157 +802,136 @@ def get_wifi_board_sn_stats():
                 # 北京时间转UTC（减8小时）
                 if end_dt.tzinfo is None:
                     end_dt = end_dt - timedelta(hours=8)
-                time_filter += " AND create_time <= :end_date"
-                params['end_date'] = end_dt
+                cte_conditions.append(f"wbt.create_time <= '{end_dt.isoformat()}'")
             except ValueError:
-                return jsonify({'error': 'Invalid end_date format'}), 400
+                return jsonify({'error': 'Invalid end_date format. Use YYYY-MM-DD or ISO format'}), 400
         
-        # SN码过滤条件
-        sn_filter = ""
+        # 序列号筛选条件
         if wifi_board_sn:
-            sn_filter = " AND wifi_board_sn LIKE :wifi_board_sn"
-            params['wifi_board_sn'] = f'%{wifi_board_sn}%'
+            cte_conditions.append(f"wbt.wifi_board_sn LIKE '%{wifi_board_sn}%'")
+
+        # 构建CTE查询
+        cte_where_clause = " AND ".join(cte_conditions)
         
-        # 验证排序字段
-        valid_sort_fields = {
-            'wifi_board_sn': 'wifi_board_sn',
-            'total_tests': 'total_tests', 
-            'success_tests': 'success_tests',
-            'fail_tests': 'fail_tests',
-            'success_rate': 'success_rate',
-            'latest_test_time': 'latest_test_time',
-            'latest_result': 'latest_result',
-            'first_test_time': 'first_test_time'
-        }
-        
-        if sort_by not in valid_sort_fields:
-            sort_by = 'latest_test_time'
-        
-        if sort_order not in ['asc', 'desc']:
-            sort_order = 'desc'
-        
-        # 构建高效的统计查询SQL（返回时间转换为北京时间）
-        stats_sql = text(f"""
-        WITH board_stats AS (
+        # 板子维度统计：每块板子一行数据，基于最新测试结果筛选
+        stats_query = f"""
+        WITH board_all_tests AS (
+            SELECT 
+                wbt.wifi_board_sn,
+                wbt.general_test_result,
+                wbt.create_time,
+                CONVERT_TZ(wbt.create_time, '+00:00', '+08:00') as local_create_time,
+                ROW_NUMBER() OVER (PARTITION BY wbt.wifi_board_sn ORDER BY wbt.create_time DESC) as rn
+            FROM wifi_board_tests wbt
+            WHERE {cte_where_clause}
+        ),
+        board_latest_result AS (
             SELECT 
                 wifi_board_sn,
-                COUNT(*) as total_tests,
-                SUM(CASE WHEN general_test_result = 'pass' THEN 1 ELSE 0 END) as success_tests,
-                SUM(CASE WHEN general_test_result = 'fail' THEN 1 ELSE 0 END) as fail_tests,
-                ROUND(
-                    (SUM(CASE WHEN general_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
-                    2
-                ) as success_rate,
-                CONVERT_TZ(MIN(create_time), '+00:00', '+08:00') as first_test_time,
-                CONVERT_TZ(MAX(create_time), '+00:00', '+08:00') as latest_test_time
-            FROM wifi_board_tests 
-            WHERE is_deleted = 0 {time_filter} {sn_filter}
-            GROUP BY wifi_board_sn
+                general_test_result as latest_result,
+                local_create_time as latest_test_time
+            FROM board_all_tests
+            WHERE rn = 1
         ),
-        latest_results AS (
-            SELECT DISTINCT
-                wifi_board_sn,
-                FIRST_VALUE(general_test_result) OVER (
-                    PARTITION BY wifi_board_sn 
-                    ORDER BY create_time DESC
-                ) as latest_result
-            FROM wifi_board_tests 
-            WHERE is_deleted = 0 {time_filter} {sn_filter}
+        board_stats AS (
+            SELECT 
+                bat.wifi_board_sn,
+                COUNT(*) as total_tests,
+                SUM(CASE WHEN bat.general_test_result = 'pass' THEN 1 ELSE 0 END) as pass_count,
+                SUM(CASE WHEN bat.general_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count,
+                MIN(bat.local_create_time) as first_test_time,
+                ROUND(
+                    (SUM(CASE WHEN bat.general_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
+                    2
+                ) as pass_rate
+            FROM board_all_tests bat
+            WHERE bat.wifi_board_sn IS NOT NULL AND bat.wifi_board_sn != ''
+            GROUP BY bat.wifi_board_sn
         )
         SELECT 
             bs.wifi_board_sn,
             bs.total_tests,
-            bs.success_tests,
-            bs.fail_tests,
-            bs.success_rate,
+            bs.pass_count,
+            bs.fail_count,
+            bs.pass_rate,
             bs.first_test_time,
-            bs.latest_test_time,
-            lr.latest_result
+            blr.latest_test_time,
+            blr.latest_result
         FROM board_stats bs
-        LEFT JOIN latest_results lr ON bs.wifi_board_sn = lr.wifi_board_sn
+        JOIN board_latest_result blr ON bs.wifi_board_sn = blr.wifi_board_sn
+        WHERE 1=1 {" AND blr.latest_result = '" + latest_result + "'" if latest_result else ""}
         ORDER BY {valid_sort_fields[sort_by]} {sort_order.upper()}
-        LIMIT :per_page OFFSET :offset
-        """)
-        
-        # 计算偏移量
-        offset = (page - 1) * per_page
-        params.update({
-            'per_page': per_page,
-            'offset': offset
-        })
+        LIMIT {per_page} OFFSET {(page - 1) * per_page}
+        """
         
         # 执行统计查询
-        results = db.session.execute(stats_sql, params).fetchall()
+        result = db.session.execute(text(stats_query))
+        sn_stats_data = [dict(row._mapping) for row in result]
         
-        # 获取总数查询（用于分页）
-        count_sql = text(f"""
-        SELECT COUNT(DISTINCT wifi_board_sn) as total_count
-        FROM wifi_board_tests 
-        WHERE is_deleted = 0 {time_filter} {sn_filter}
-        """)
+        # 获取总数统计（用于分页）- 基于板子维度和最新结果筛选
+        count_query = f"""
+        WITH board_all_tests AS (
+            SELECT 
+                wbt.wifi_board_sn,
+                wbt.general_test_result,
+                wbt.create_time,
+                ROW_NUMBER() OVER (PARTITION BY wbt.wifi_board_sn ORDER BY wbt.create_time DESC) as rn
+            FROM wifi_board_tests wbt
+            WHERE {cte_where_clause}
+        ),
+        board_latest_result AS (
+            SELECT 
+                wifi_board_sn,
+                general_test_result as latest_result
+            FROM board_all_tests
+            WHERE rn = 1
+              AND wifi_board_sn IS NOT NULL 
+              AND wifi_board_sn != ''
+        )
+        SELECT COUNT(*) as total_board_count 
+        FROM board_latest_result
+        WHERE 1=1 {" AND latest_result = '" + latest_result + "'" if latest_result else ""}
+        """
         
-        count_params = {k: v for k, v in params.items() if k not in ['per_page', 'offset']}
-        total_count = db.session.execute(count_sql, count_params).fetchone().total_count
+        count_result = db.session.execute(text(count_query))
+        total_board_count = count_result.scalar()
         
-        # 获取汇总统计信息
-        summary_sql = text(f"""
-        SELECT 
-            COUNT(DISTINCT wifi_board_sn) as total_boards,
-            COUNT(*) as total_tests,
-            ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT wifi_board_sn), 2) as avg_tests_per_board,
-            SUM(CASE WHEN general_test_result = 'pass' THEN 1 ELSE 0 END) as total_success,
-            SUM(CASE WHEN general_test_result = 'fail' THEN 1 ELSE 0 END) as total_fail
-        FROM wifi_board_tests 
-        WHERE is_deleted = 0 {time_filter} {sn_filter}
-        """)
-        
-        summary_result = db.session.execute(summary_sql, count_params).fetchone()
-        
-        # 转换结果为字典列表
-        data = []
-        for row in results:
-            data.append({
-                'wifi_board_sn': row.wifi_board_sn,
-                'total_tests': int(row.total_tests),
-                'success_tests': int(row.success_tests),
-                'fail_tests': int(row.fail_tests),
-                'success_rate': float(row.success_rate) if row.success_rate else 0.0,
-                'first_test_time': row.first_test_time.isoformat() if row.first_test_time else None,
-                'latest_test_time': row.latest_test_time.isoformat() if row.latest_test_time else None,
-                'latest_result': row.latest_result or 'unknown'
+        # 格式化返回数据
+        formatted_stats = []
+        for row in sn_stats_data:
+            formatted_stats.append({
+                'wifi_board_sn': row['wifi_board_sn'],
+                'total_tests': int(row['total_tests']),
+                'pass_count': int(row['pass_count']),
+                'fail_count': int(row['fail_count']),
+                'pass_rate': float(row['pass_rate']),
+                'latest_test_time': row['latest_test_time'].isoformat() if row['latest_test_time'] else None,
+                'first_test_time': row['first_test_time'].isoformat() if row['first_test_time'] else None,
+                'latest_result': row['latest_result']
             })
         
-        # 计算分页信息
-        total_pages = (total_count + per_page - 1) // per_page
+        # 构建分页信息
+        total_pages = (total_board_count + per_page - 1) // per_page
         
-        # 构建返回结果
         response_data = {
-            'data': data,
+            'sn_stats': formatted_stats,
             'pagination': {
                 'page': page,
                 'per_page': per_page,
-                'total': int(total_count),
-                'pages': total_pages,
-                'has_next': page < total_pages,
-                'has_prev': page > 1
-            },
-            'summary': {
-                'total_boards': int(summary_result.total_boards or 0),
-                'total_tests': int(summary_result.total_tests or 0),
-                'avg_tests_per_board': float(summary_result.avg_tests_per_board or 0),
-                'total_success': int(summary_result.total_success or 0),
-                'total_fail': int(summary_result.total_fail or 0)
+                'total': total_board_count,
+                'pages': total_pages
             },
             'filters': {
                 'start_date': start_date,
                 'end_date': end_date,
                 'wifi_board_sn': wifi_board_sn,
+                'latest_result': latest_result,
                 'sort_by': sort_by,
                 'sort_order': sort_order
             }
         }
         
-        logger.info(f"WiFi board SN stats completed. Total boards: {total_count}, Page: {page}")
+        logger.info(f"WiFi board SN stats query completed. Found {len(formatted_stats)} board records, total boards: {total_board_count}")
         return jsonify(response_data)
         
     except Exception as e:

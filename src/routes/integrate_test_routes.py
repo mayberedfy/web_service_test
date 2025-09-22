@@ -673,14 +673,16 @@ def validate_required_fields(json_data):
 @integrate_tests_bp.route('/sn-stats', methods=['GET'])
 def get_integrate_sn_stats():
     """
-    获取集成测试的序列号统计信息
-    包含每个序列号的测试次数、成功率、最新测试时间等
+    获取集成测试的序列号统计信息 (产品维度)
+    每个产品一行数据，测试结果=该产品最新一次测试的结果
     
     查询参数:
     - start_date: 开始日期 (YYYY-MM-DD，北京时间)
     - end_date: 结束日期 (YYYY-MM-DD，北京时间)
     - product_sn: 产品序列号筛选 (部分匹配)
-    - integrate_test_result: 测试结果筛选 (pass/fail)
+    - latest_result: 筛选最新测试结果 (pass/fail)
+    - sort_by: 排序字段 (product_sn, total_tests, pass_count, fail_count, pass_rate, latest_test_time, first_test_time, latest_result)
+    - sort_order: 排序方向 (asc, desc，默认desc)
     - page: 页码 (默认: 1)
     - per_page: 每页记录数 (默认: 10, 最大: 100)
     
@@ -690,11 +692,12 @@ def get_integrate_sn_stats():
             {
                 "product_sn": "序列号",
                 "total_tests": 总测试次数,
-                "success_count": 成功次数,
+                "pass_count": 成功次数,
                 "fail_count": 失败次数,
-                "success_rate": 成功率百分比,
+                "pass_rate": 成功率百分比,
                 "latest_test_time": "最新测试时间(北京时间)",
-                "first_test_time": "首次测试时间(北京时间)"
+                "first_test_time": "首次测试时间(北京时间)",
+                "latest_result": "最新测试结果(pass/fail)"
             }
         ],
         "pagination": {
@@ -711,9 +714,22 @@ def get_integrate_sn_stats():
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         product_sn = request.args.get('product_sn')
-        integrate_test_result = request.args.get('integrate_test_result')
+        latest_result = request.args.get('latest_result')  # pass/fail
+        sort_by = request.args.get('sort_by', 'latest_test_time')
+        sort_order = request.args.get('sort_order', 'desc')
         page = int(request.args.get('page', 1))
         per_page = min(int(request.args.get('per_page', 10)), 100)
+
+        # 验证参数
+        if sort_by not in ['product_sn', 'total_tests', 'pass_count', 'fail_count', 'pass_rate', 
+                          'latest_test_time', 'first_test_time', 'latest_result']:
+            return jsonify({'error': f'Invalid sort_by parameter: {sort_by}'}), 400
+        
+        if sort_order not in ['asc', 'desc']:
+            return jsonify({'error': f'Invalid sort_order parameter: {sort_order}'}), 400
+        
+        if latest_result and latest_result not in ['pass', 'fail']:
+            return jsonify({'error': f'Invalid latest_result parameter: {latest_result}'}), 400
 
         # 构建 CTE 查询以优化性能
         cte_conditions = ["it.is_deleted = FALSE"]
@@ -744,59 +760,101 @@ def get_integrate_sn_stats():
         # 序列号筛选条件
         if product_sn:
             cte_conditions.append(f"it.product_sn LIKE '%{product_sn}%'")
-        
-        if integrate_test_result:
-            cte_conditions.append(f"it.integrate_test_result = '{integrate_test_result}'")
 
         # 构建CTE查询
         cte_where_clause = " AND ".join(cte_conditions)
         
-        # 使用 CTE 和窗口函数进行高效聚合统计（返回北京时间）
+        # 排序字段映射
+        sort_field_map = {
+            'product_sn': 'product_sn',
+            'total_tests': 'total_tests',
+            'pass_count': 'pass_count',
+            'fail_count': 'fail_count', 
+            'pass_rate': 'pass_rate',
+            'latest_test_time': 'latest_test_time',
+            'first_test_time': 'first_test_time',
+            'latest_result': 'latest_result'
+        }
+        
+        # 使用board-centric CTE模式，每个产品序列号只返回一行
         stats_query = f"""
-        WITH filtered_tests AS (
+        WITH latest_test_per_board AS (
             SELECT 
                 it.product_sn,
                 it.integrate_test_result,
-                CONVERT_TZ(it.create_time, '+00:00', '+08:00') as local_create_time
+                CONVERT_TZ(it.create_time, '+00:00', '+08:00') as local_create_time,
+                ROW_NUMBER() OVER (PARTITION BY it.product_sn ORDER BY it.create_time DESC) as rn
             FROM integrate_tests it
             WHERE {cte_where_clause}
+              AND it.product_sn IS NOT NULL 
+              AND it.product_sn != ''
         ),
-        sn_aggregates AS (
+        board_stats AS (
             SELECT 
-                product_sn,
+                it.product_sn,
                 COUNT(*) as total_tests,
-                SUM(CASE WHEN integrate_test_result = 'pass' THEN 1 ELSE 0 END) as success_count,
-                SUM(CASE WHEN integrate_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count,
-                MAX(local_create_time) as latest_test_time,
-                MIN(local_create_time) as first_test_time,
+                SUM(CASE WHEN it.integrate_test_result = 'pass' THEN 1 ELSE 0 END) as pass_count,
+                SUM(CASE WHEN it.integrate_test_result = 'fail' THEN 1 ELSE 0 END) as fail_count,
                 ROUND(
-                    (SUM(CASE WHEN integrate_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
+                    (SUM(CASE WHEN it.integrate_test_result = 'pass' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
                     2
-                ) as success_rate
-            FROM filtered_tests
-            WHERE product_sn IS NOT NULL AND product_sn != ''
-            GROUP BY product_sn
-            ORDER BY total_tests DESC, success_rate DESC
-            LIMIT {per_page} OFFSET {(page - 1) * per_page}
+                ) as pass_rate,
+                MAX(CONVERT_TZ(it.create_time, '+00:00', '+08:00')) as latest_test_time,
+                MIN(CONVERT_TZ(it.create_time, '+00:00', '+08:00')) as first_test_time
+            FROM integrate_tests it
+            WHERE {cte_where_clause}
+              AND it.product_sn IS NOT NULL 
+              AND it.product_sn != ''
+            GROUP BY it.product_sn
+        ),
+        final_stats AS (
+            SELECT 
+                bs.*,
+                lt.integrate_test_result as latest_result
+            FROM board_stats bs
+            JOIN latest_test_per_board lt ON bs.product_sn = lt.product_sn AND lt.rn = 1"""
+        
+        # 添加latest_result过滤
+        if latest_result:
+            stats_query += f"""
+            WHERE lt.integrate_test_result = '{latest_result}'"""
+        
+        stats_query += f"""
         )
-        SELECT * FROM sn_aggregates
+        SELECT * FROM final_stats
+        ORDER BY {sort_field_map[sort_by]} {sort_order.upper()}
+        LIMIT {per_page} OFFSET {(page - 1) * per_page}
         """
         
         # 执行统计查询
         result = db.session.execute(text(stats_query))
         sn_stats_data = [dict(row._mapping) for row in result]
         
-        # 获取总数统计（用于分页）
-        count_query = f"""
-        WITH filtered_tests AS (
-            SELECT DISTINCT it.product_sn
+        # 获取总数统计（用于分页） - 考虑latest_result过滤
+        if latest_result:
+            count_query = f"""
+            WITH latest_test_per_board AS (
+                SELECT 
+                    it.product_sn,
+                    it.integrate_test_result,
+                    ROW_NUMBER() OVER (PARTITION BY it.product_sn ORDER BY it.create_time DESC) as rn
+                FROM integrate_tests it
+                WHERE {cte_where_clause}
+                  AND it.product_sn IS NOT NULL 
+                  AND it.product_sn != ''
+            )
+            SELECT COUNT(*) as total_sn_count 
+            FROM latest_test_per_board 
+            WHERE rn = 1 AND integrate_test_result = '{latest_result}'
+            """
+        else:
+            count_query = f"""
+            SELECT COUNT(DISTINCT it.product_sn) as total_sn_count
             FROM integrate_tests it
             WHERE {cte_where_clause}
               AND it.product_sn IS NOT NULL 
               AND it.product_sn != ''
-        )
-        SELECT COUNT(*) as total_sn_count FROM filtered_tests
-        """
+            """
         
         count_result = db.session.execute(text(count_query))
         total_sn_count = count_result.scalar()
@@ -807,11 +865,12 @@ def get_integrate_sn_stats():
             formatted_stats.append({
                 'product_sn': row['product_sn'],
                 'total_tests': int(row['total_tests']),
-                'success_count': int(row['success_count']),
+                'pass_count': int(row['pass_count']),
                 'fail_count': int(row['fail_count']),
-                'success_rate': float(row['success_rate']),
+                'pass_rate': float(row['pass_rate']),
                 'latest_test_time': row['latest_test_time'].isoformat() if row['latest_test_time'] else None,
-                'first_test_time': row['first_test_time'].isoformat() if row['first_test_time'] else None
+                'first_test_time': row['first_test_time'].isoformat() if row['first_test_time'] else None,
+                'latest_result': row['latest_result']
             })
         
         # 构建分页信息
@@ -829,7 +888,9 @@ def get_integrate_sn_stats():
                 'start_date': start_date,
                 'end_date': end_date,
                 'product_sn': product_sn,
-                'integrate_test_result': integrate_test_result
+                'latest_result': latest_result,
+                'sort_by': sort_by,
+                'sort_order': sort_order
             }
         }
         
