@@ -28,7 +28,11 @@ app = Flask(__name__)
 app.config.from_object(Config)
 
 # 开启 CORS 支持
-CORS(app, origins=["http://localhost:5173", "https://your-admin-domain.com"])
+CORS(app, supports_credentials=True, origins=[
+    "http://localhost:5173",
+    "http://39.174.166.94:5173",
+    "https://your-admin-domain.com"
+])
 
 # 初始化数据库
 db.init_app(app)
